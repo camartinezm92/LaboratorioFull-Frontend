@@ -32,9 +32,19 @@ export const usePermissions = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let unsubscribeDoc: (() => void) | null = null;
+
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      // Clear previous doc listener if any
+      if (unsubscribeDoc) {
+        unsubscribeDoc();
+        unsubscribeDoc = null;
+      }
+
       if (user) {
-        if (user.email?.toLowerCase() === SUPER_ADMIN_EMAIL) {
+        const userEmail = user.email?.toLowerCase();
+        
+        if (userEmail === SUPER_ADMIN_EMAIL) {
           setIsAdmin(true);
           setPermissions({
             hemoderivados: { crear: true, consultar: true, editar: true, eliminar: true, aceptar: true, devolver: true },
@@ -45,7 +55,7 @@ export const usePermissions = () => {
           return;
         }
 
-        const unsubscribeDoc = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
+        unsubscribeDoc = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data();
             if (data.active) {
@@ -56,18 +66,17 @@ export const usePermissions = () => {
               setIsAdmin(false);
             }
           } else {
+            console.log(`No user document found for UID: ${user.uid}`);
             setPermissions(null);
             setIsAdmin(false);
           }
           setLoading(false);
         }, (error) => {
-          console.error("Error fetching user permissions:", error);
+          console.error(`Error fetching user permissions for ${user.email} (${user.uid}):`, error);
           setPermissions(null);
           setIsAdmin(false);
           setLoading(false);
         });
-
-        return () => unsubscribeDoc();
       } else {
         setPermissions(null);
         setIsAdmin(false);
@@ -75,7 +84,10 @@ export const usePermissions = () => {
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeDoc) unsubscribeDoc();
+    };
   }, []);
 
   const hasPermission = (section: keyof UserPermissions, action: string) => {
