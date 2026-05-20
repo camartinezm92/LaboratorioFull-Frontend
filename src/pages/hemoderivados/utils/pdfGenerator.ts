@@ -127,19 +127,24 @@ export const generatePDF = async (record: BloodTestRecord) => {
   doc.text(record.unitExpirationDate || '', col4, yPos);
 
   yPos += 8;
-  doc.text('GRUPO PACIENTE', col1, yPos);
-  
+  doc.setFont('helvetica', 'bold');
+  doc.text('GRUPO PACIENTE (INMUNOHEMATOLOGÍA)', col1, yPos);
+  doc.setFont('helvetica', 'normal');
   yPos += 4;
-  doc.text(`${record.bloodGroup || ''} ${getRhText(record.rh || '')}`, col1, yPos);
+  doc.text(`Resultado: ${record.bloodGroup || ''}${record.rh || ''}`, col1, yPos);
+  doc.text(`Fórmula: [A: ${record.patientBloodA || '0'} | B: ${record.patientBloodB || '0'} | AB: ${record.patientBloodAB || '0'} | D: ${record.patientBloodD || '+'}]`, col1 + 40, yPos);
 
   yPos += 8;
-  doc.text('RASTREO DE ANTICUERPOS IRREGULARES', col1, yPos);
+  doc.setFont('helvetica', 'bold');
+  doc.text('RASTREO DE ANTICUERPOS IRREGULARES (POR FASES)', col1, yPos);
+  doc.setFont('helvetica', 'normal');
+  
   yPos += 4;
-  doc.text(`GENERAL: ${record.irregularAntibodies || 'NEGATIVO'}`, col1, yPos);
+  doc.text(`F. SALINA     -> Prueba: ${record.salinaPruebaCruzada || '0'} | Autocontrol: ${record.salinaAutocontrol || '0'} | Temp: ${record.salinaTemperatura || 'TA'}`, col1, yPos);
   yPos += 4;
-  doc.text(`AUTOCONTROL: ${record.autocontrol || '0'}`, col1, yPos);
+  doc.text(`F. INCUBACIÓN -> Prueba: ${record.incubacionPruebaCruzada || '0'} | Autocontrol: ${record.incubacionAutocontrol || '0'} | Temp: ${record.incubacionTemperatura || '37°C'}`, col1, yPos);
   yPos += 4;
-  doc.text(`TEMPERATURA: ${record.temperature || ''} °C`, col1, yPos);
+  doc.text(`F. PROTEICA   -> Prueba: ${record.proteicaPruebaCruzada || '0'} | Autocontrol: ${record.proteicaAutocontrol || '0'} | Temp: ${record.proteicaTemperatura || '37°C'}`, col1, yPos);
 
   yPos += 8;
   doc.setFont('helvetica', 'bold');
