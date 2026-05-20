@@ -900,18 +900,63 @@ export const PreTransfusionalApp: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4 bg-zinc-50 p-4 rounded-2xl">
-                  <div>
-                    <p className="text-sm text-zinc-500 mb-1">Anticuerpos Irregulares</p>
-                    <p className="font-medium text-zinc-900">{selectedRecord.irregularAntibodies || 'N/A'}</p>
+                {/* Paciente Validación Grid Details */}
+                <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
+                  <p className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                    <Droplets size={14} className="text-red-500" />
+                    Validación Sangre Paciente (Inmunohematología)
+                  </p>
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="bg-white p-2 rounded-xl border border-zinc-200 text-center">
+                      <span className="text-[10px] text-zinc-400 font-bold block uppercase">A</span>
+                      <span className="text-sm font-black text-zinc-800">{selectedRecord.patientBloodA || '0'}</span>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl border border-zinc-200 text-center">
+                      <span className="text-[10px] text-zinc-400 font-bold block uppercase">B</span>
+                      <span className="text-sm font-black text-zinc-800">{selectedRecord.patientBloodB || '0'}</span>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl border border-zinc-200 text-center">
+                      <span className="text-[10px] text-zinc-400 font-bold block uppercase">AB</span>
+                      <span className="text-sm font-black text-zinc-800">{selectedRecord.patientBloodAB || '0'}</span>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl border border-zinc-200 text-center">
+                      <span className="text-[10px] text-zinc-400 font-bold block uppercase">D</span>
+                      <span className="text-sm font-black text-zinc-800">{selectedRecord.patientBloodD || '+'}</span>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm text-zinc-500 mb-1">Autocontrol</p>
-                    <p className="font-medium text-zinc-900">{selectedRecord.autocontrol || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-zinc-500 mb-1">Temperatura (°C)</p>
-                    <p className="font-medium text-zinc-900">{selectedRecord.temperature || 'N/A'}</p>
+                </div>
+
+                {/* Phase-specific results */}
+                <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 space-y-3">
+                  <p className="text-xs font-black text-zinc-500 uppercase tracking-widest flex items-center gap-1.5">
+                    <Activity size={14} className="text-red-500" />
+                    Rastreo de Anticuerpos Irregulares (Por Fases)
+                  </p>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div className="bg-white p-3 rounded-xl border border-zinc-200 space-y-1">
+                      <span className="font-extrabold text-blue-600 uppercase block tracking-wider">Fase Salina</span>
+                      <div className="text-zinc-600 space-y-0.5">
+                        <p>Prueba: <strong className="text-zinc-900 font-black">{selectedRecord.salinaPruebaCruzada || '0'}</strong></p>
+                        <p>Autocontrol: <strong className="text-zinc-900 font-black">{selectedRecord.salinaAutocontrol || '0'}</strong></p>
+                        <p>Temp: <strong className="text-zinc-900 font-black">{selectedRecord.salinaTemperatura || 'TA'}</strong></p>
+                      </div>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-zinc-200 space-y-1">
+                      <span className="font-extrabold text-amber-600 uppercase block tracking-wider">Fase Incubación</span>
+                      <div className="text-zinc-600 space-y-0.5">
+                        <p>Prueba: <strong className="text-zinc-900 font-black">{selectedRecord.incubacionPruebaCruzada || '0'}</strong></p>
+                        <p>Autocontrol: <strong className="text-zinc-900 font-black">{selectedRecord.incubacionAutocontrol || '0'}</strong></p>
+                        <p>Temp: <strong className="text-zinc-900 font-black">{selectedRecord.incubacionTemperatura || '37°C'}</strong></p>
+                      </div>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-zinc-200 space-y-1">
+                      <span className="font-extrabold text-red-600 uppercase block tracking-wider">Fase Proteica</span>
+                      <div className="text-zinc-600 space-y-0.5">
+                        <p>Prueba: <strong className="text-zinc-900 font-black">{selectedRecord.proteicaPruebaCruzada || '0'}</strong></p>
+                        <p>Autocontrol: <strong className="text-zinc-900 font-black">{selectedRecord.proteicaAutocontrol || '0'}</strong></p>
+                        <p>Temp: <strong className="text-zinc-900 font-black">{selectedRecord.proteicaTemperatura || '37°C'}</strong></p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
