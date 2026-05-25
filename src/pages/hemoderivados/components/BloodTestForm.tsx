@@ -1,10 +1,38 @@
-
 import React, { useState, useEffect } from 'react';
 import { BloodTestRecord, ReceivedUnitRecord } from '../types';
 import { generateInterpretation } from '../utils/bloodTestUtils';
 import { PROFESSIONALS } from '../../../constants';
 import { getColombiaISO, getNowISO } from '../../../utils/dateUtils';
 import { Save, User, IdCard, Calendar, Droplets, ShieldCheck, UserCheck, FileText, Activity, AlertTriangle, MapPin, Hash, CheckCircle, XCircle, Search, Package } from 'lucide-react';
+
+export const computeBloodGroupAndRh = (a: string, b: string, ab: string, d: string): { group: 'A' | 'B' | 'AB' | 'O' | ''; rh: '+' | '-' | '' } => {
+  const combination = `${a},${b},${ab},${d}`;
+  switch (combination) {
+    case '+,0,+,+': return { group: 'A', rh: '+' };
+    case '+,0,+,0': return { group: 'A', rh: '-' };
+    case '0,+,+,+': return { group: 'B', rh: '+' };
+    case '0,+,+,0': return { group: 'B', rh: '-' };
+    case '+,+,+,+': return { group: 'AB', rh: '+' };
+    case '+,+,+,0': return { group: 'AB', rh: '-' };
+    case '0,0,0,+': return { group: 'O', rh: '+' };
+    case '0,0,0,0': return { group: 'O', rh: '-' };
+    default: return { group: '', rh: '' }; // Invalid/unrecognized combinations
+  }
+};
+
+export const reverseMapBloodGroup = (group: string, rh: string): { a: '0' | '+'; b: '0' | '+'; ab: '0' | '+'; d: '0' | '+' } => {
+  const g = group?.toUpperCase().trim();
+  const r = rh?.trim();
+  if (g === 'A' && r === '+') return { a: '+', b: '0', ab: '+', d: '+' };
+  if (g === 'A' && r === '-') return { a: '+', b: '0', ab: '+', d: '0' };
+  if (g === 'B' && r === '+') return { a: '0', b: '+', ab: '+', d: '+' };
+  if (g === 'B' && r === '-') return { a: '0', b: '+', ab: '+', d: '0' };
+  if (g === 'AB' && r === '+') return { a: '+', b: '+', ab: '+', d: '+' };
+  if (g === 'AB' && r === '-') return { a: '+', b: '+', ab: '+', d: '0' };
+  if (g === 'O' && r === '+') return { a: '0', b: '0', ab: '0', d: '+' };
+  if (g === 'O' && r === '-') return { a: '0', b: '0', ab: '0', d: '0' };
+  return { a: '0', b: '0', ab: '0', d: '+' }; // default O+
+};
 
 interface BloodTestFormProps {
   onSave: (record: BloodTestRecord) => void;
@@ -27,33 +55,54 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
   isSyncing,
   initialData
 }) => {
-  const [formData, setFormData] = useState<Partial<BloodTestRecord>>(initialData || {
-    bloodGroup: 'O',
-    rh: '+',
-    testDate: getColombiaISO(), // Usar hora de Colombia
-    result: '',
-    patientName: '',
-    patientId: '',
-    eps: '',
-    age: '',
-    gender: 'M',
-    unitId: '',
-    unitGroup: 'O',
-    unitRh: '+',
-    unitExpirationDate: '',
-    irregularAntibodies: 'NEGATIVO',
-    autocontrol: '0',
-    temperature: '',
-    provider: 'Hemolife',
-    requestedHemoderivative: 'Globulos Rojos',
-    requestType: 'Reserva',
-    qualitySeal: '',
-    justification: '',
-    siheviReport: 'No',
-    siheviDescription: '',
-    siheviPredefinedText: '',
-    bacteriologist: PROFESSIONALS[0].name,
-    registryNumber: PROFESSIONALS[0].registry,
+  const [formData, setFormData] = useState<Partial<BloodTestRecord>>(() => {
+    const init: BloodTestRecord = (initialData || {
+      bloodGroup: 'O',
+      rh: '+',
+      testDate: getColombiaISO(), // Usar hora de Colombia
+      result: '',
+      patientName: '',
+      patientId: '',
+      eps: '',
+      age: '',
+      gender: 'M',
+      unitId: '',
+      unitGroup: 'O',
+      unitRh: '+',
+      unitExpirationDate: '',
+      irregularAntibodies: 'NEGATIVO',
+      autocontrol: '0',
+      temperature: '',
+      provider: 'Hemolife',
+      requestedHemoderivative: 'Globulos Rojos',
+      requestType: 'Reserva',
+      qualitySeal: '',
+      justification: '',
+      siheviReport: 'No',
+      siheviDescription: '',
+      siheviPredefinedText: '',
+      bacteriologist: '',
+      registryNumber: '',
+      // Phase fields initialize
+      salinaPruebaCruzada: '0',
+      salinaAutocontrol: '0',
+      salinaTemperatura: '',
+      incubacionPruebaCruzada: '0',
+      incubacionAutocontrol: '0',
+      incubacionTemperatura: '',
+      proteicaPruebaCruzada: '0',
+      proteicaAutocontrol: '0',
+      proteicaTemperatura: '',
+      createdAt: getNowISO()
+    }) as BloodTestRecord;
+    const defaultBins = reverseMapBloodGroup(init.bloodGroup || 'O', init.rh || '+');
+    return {
+      ...init,
+      patientBloodA: init.patientBloodA || defaultBins.a,
+      patientBloodB: init.patientBloodB || defaultBins.b,
+      patientBloodAB: init.patientBloodAB || defaultBins.ab,
+      patientBloodD: init.patientBloodD || defaultBins.d,
+    };
   });
 
   const receptores = [
@@ -106,7 +155,14 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
 
   useEffect(() => {
     if (initialData) {
-      setFormData(initialData);
+      const defaultBins = reverseMapBloodGroup(initialData.bloodGroup || 'O', initialData.rh || '+');
+      setFormData({
+        ...initialData,
+        patientBloodA: initialData.patientBloodA || defaultBins.a,
+        patientBloodB: initialData.patientBloodB || defaultBins.b,
+        patientBloodAB: initialData.patientBloodAB || defaultBins.ab,
+        patientBloodD: initialData.patientBloodD || defaultBins.d,
+      });
     }
   }, [initialData]);
 
@@ -129,6 +185,7 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
 
     if (patientRecords.length > 0) {
       const latestRecord = patientRecords[0];
+      const defaultBins = reverseMapBloodGroup(latestRecord.bloodGroup || 'O', latestRecord.rh || '+');
       setFormData(prev => ({
         ...prev,
         patientName: latestRecord.patientName,
@@ -137,6 +194,10 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
         gender: latestRecord.gender || 'M',
         bloodGroup: latestRecord.bloodGroup || 'O',
         rh: latestRecord.rh || '+',
+        patientBloodA: defaultBins.a,
+        patientBloodB: defaultBins.b,
+        patientBloodAB: defaultBins.ab,
+        patientBloodD: defaultBins.d,
       }));
       setPatientFound(true);
       setValidationMessage({ text: 'Paciente encontrado. Datos cargados.', type: 'success' });
@@ -222,6 +283,10 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
     setFormData({
       bloodGroup: 'O',
       rh: '+',
+      patientBloodA: '0',
+      patientBloodB: '0',
+      patientBloodAB: '0',
+      patientBloodD: '+',
       testDate: getColombiaISO(),
       result: '',
       patientName: '',
@@ -236,12 +301,21 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
       irregularAntibodies: 'NEGATIVO',
       autocontrol: '0',
       temperature: '',
+      salinaPruebaCruzada: '0',
+      salinaAutocontrol: '0',
+      salinaTemperatura: '',
+      incubacionPruebaCruzada: '0',
+      incubacionAutocontrol: '0',
+      incubacionTemperatura: '',
+      proteicaPruebaCruzada: '0',
+      proteicaAutocontrol: '0',
+      proteicaTemperatura: '',
       provider: 'Hemolife',
       requestedHemoderivative: 'Globulos Rojos',
       requestType: 'Reserva',
       qualitySeal: '',
-      bacteriologist: PROFESSIONALS[0].name,
-      registryNumber: PROFESSIONALS[0].registry,
+      bacteriologist: '',
+      registryNumber: '',
     });
   };
 
@@ -255,6 +329,16 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
 
     if (!unitExists) {
       setAlertMessage('ERROR: No se puede registrar la prueba. La unidad no se encuentra en los registros de recepción. Por favor, valide la unidad primero.');
+      return;
+    }
+
+    if (!formData.bloodGroup || !formData.rh) {
+      setAlertMessage('ERROR: El grupo de sangre o Rh del paciente no se ha podido determinar. Por favor verifique la validación de sangre del paciente (A, B, AB, D).');
+      return;
+    }
+
+    if (!formData.bacteriologist) {
+      setAlertMessage('Por favor seleccione el Bacteriólogo Responsable de realizar la prueba.');
       return;
     }
 
@@ -314,6 +398,31 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
         updated.justification = '';
       }
 
+      // Cross-match auto-conclusion logic for three phases
+      if ([
+        'salinaPruebaCruzada', 
+        'incubacionPruebaCruzada', 
+        'proteicaPruebaCruzada', 
+        'requestedHemoderivative'
+      ].includes(name)) {
+        if (updated.requestedHemoderivative !== 'Globulos Rojos') {
+          updated.result = 'Unidad disponible';
+          updated.irregularAntibodies = 'NO APLICA';
+        } else {
+          const sPC = name === 'salinaPruebaCruzada' ? value : (updated.salinaPruebaCruzada || '0');
+          const iPC = name === 'incubacionPruebaCruzada' ? value : (updated.incubacionPruebaCruzada || '0');
+          const pPC = name === 'proteicaPruebaCruzada' ? value : (updated.proteicaPruebaCruzada || '0');
+          
+          if (sPC === '+' || iPC === '+' || pPC === '+') {
+            updated.result = 'Incompatible';
+            updated.irregularAntibodies = 'POSITIVO';
+          } else {
+            updated.result = 'Compatible';
+            updated.irregularAntibodies = 'NEGATIVO';
+          }
+        }
+      }
+
       // SIHEVI Logic
       if (['siheviReport', 'siheviDescription', 'patientId', 'patientName'].includes(name)) {
         const report = name === 'siheviReport' ? value : updated.siheviReport;
@@ -338,6 +447,21 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
         }
       }
       
+      return updated;
+    });
+  };
+
+  const handleBloodPillChange = (key: 'patientBloodA' | 'patientBloodB' | 'patientBloodAB' | 'patientBloodD', val: '0' | '+') => {
+    setFormData(prev => {
+      const updated = { ...prev, [key]: val };
+      const res = computeBloodGroupAndRh(
+        updated.patientBloodA || '0',
+        updated.patientBloodB || '0',
+        updated.patientBloodAB || '0',
+        updated.patientBloodD || '+'
+      );
+      updated.bloodGroup = res.group;
+      updated.rh = res.rh;
       return updated;
     });
   };
@@ -401,18 +525,63 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-2 gap-4 bg-zinc-50 p-3 rounded-xl border border-zinc-100">
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-zinc-600">Grupo del Paciente</label>
-            <select name="bloodGroup" value={formData.bloodGroup} onChange={handleChange} disabled={patientFound} className={`w-full px-3 py-2 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm ${patientFound ? 'bg-zinc-50 text-zinc-500 cursor-not-allowed' : ''}`}>
-              <option value="A">A</option><option value="B">B</option><option value="AB">AB</option><option value="O">O</option>
-            </select>
+        {/* VALIDATE BLOOD GROUP & RH INTERACTIVE GRID */}
+        <div className="bg-zinc-50 rounded-2xl p-4 border border-zinc-200 mt-4 space-y-3">
+          <div className="flex justify-between items-center border-b border-zinc-200 pb-2">
+            <h4 className="text-sm font-bold text-zinc-800 flex items-center gap-2">
+              <Droplets className="text-red-600" size={18} /> Validar Sangre (Inmunohematología del Paciente)
+            </h4>
+            <span className="text-xs text-zinc-500 font-medium">Auto-clasificación en tiempo real</span>
           </div>
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-zinc-600">Rh del Paciente</label>
-            <select name="rh" value={formData.rh} onChange={handleChange} disabled={patientFound} className={`w-full px-3 py-2 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm ${patientFound ? 'bg-zinc-50 text-zinc-500 cursor-not-allowed' : ''}`}>
-              <option value="+">POSITIVO (+)</option><option value="-">NEGATIVO (-)</option>
-            </select>
+
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 items-center">
+            {/* The 4 boxes */}
+            <div className="sm:col-span-4 grid grid-cols-4 gap-2">
+              {(['patientBloodA', 'patientBloodB', 'patientBloodAB', 'patientBloodD'] as const).map((field, idx) => {
+                const label = ['A', 'B', 'AB', 'D'][idx];
+                const currentVal = formData[field] || '0';
+                return (
+                  <div key={field} className="bg-white border border-zinc-200 rounded-xl p-3 flex flex-col items-center justify-between shadow-sm space-y-2">
+                    <span className="text-xs font-black text-zinc-400 tracking-wider uppercase mb-1">{label}</span>
+                    <div className="flex gap-1 w-full justify-center">
+                      <button
+                        type="button"
+                        onClick={() => handleBloodPillChange(field, '0')}
+                        className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs font-black transition-all ${
+                          currentVal === '0'
+                            ? 'bg-zinc-900 text-white font-extrabold shadow-sm'
+                            : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600'
+                        }`}
+                      >
+                        0
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleBloodPillChange(field, '+')}
+                        className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs font-black transition-all ${
+                          currentVal === '+'
+                            ? 'bg-red-600 text-white font-extrabold shadow-sm'
+                            : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600'
+                        }`}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Realtime conclusion display inside the same panel */}
+            <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex flex-col items-center justify-center h-full min-h-[96px] text-center">
+              <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest mb-1">Resultado</span>
+              <span className="text-4xl font-black text-red-700 tracking-tight select-none">
+                {formData.bloodGroup && formData.rh ? `${formData.bloodGroup}${formData.rh}` : '❓'}
+              </span>
+              <span className="text-[10px] text-red-600 font-medium mt-1">
+                {formData.bloodGroup && formData.rh ? 'Calculado' : 'No válido'}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -578,33 +747,160 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
           </div>
         )}
 
-        <div className="space-y-4 pt-4 border-t border-zinc-50">
-          <h4 className="text-xs font-bold text-zinc-700 uppercase">Rastreo de Anticuerpos Irregulares</h4>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-zinc-600">General</label>
-              <input type="text" name="irregularAntibodies" value={formData.irregularAntibodies} onChange={handleChange} className="w-full px-3 py-2 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm" placeholder="NEGATIVO" />
+        <div className="space-y-6 pt-4 border-t border-zinc-100">
+          <div className="flex justify-between items-center">
+            <h4 className="text-xs font-black text-zinc-700 uppercase tracking-widest flex items-center gap-1.5">
+              <Activity size={14} className="text-red-500" /> Rastreo de Anticuerpos Irregulares (Por Fases)
+            </h4>
+            <span className="text-xs text-zinc-400 italic font-medium">Auto-conclusión de compatibilidad</span>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* SALINA PHASE */}
+            <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 space-y-3 relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-blue-500/80"></div>
+              <h5 className="text-xs font-bold text-blue-800 uppercase tracking-wider">Fase Salina</h5>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-600 uppercase">Prueba Cruzada *</label>
+                  <select 
+                    name="salinaPruebaCruzada" 
+                    value={formData.salinaPruebaCruzada} 
+                    onChange={handleChange} 
+                    disabled={formData.requestedHemoderivative !== 'Globulos Rojos'}
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm font-semibold"
+                  >
+                    <option value="0">0</option>
+                    <option value="+">+</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-600 uppercase">Autocontrol *</label>
+                  <select 
+                    name="salinaAutocontrol" 
+                    value={formData.salinaAutocontrol} 
+                    onChange={handleChange} 
+                    disabled={formData.requestedHemoderivative !== 'Globulos Rojos'}
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm"
+                  >
+                    <option value="0">0</option>
+                    <option value="+">+</option>
+                    <option value="++">++</option>
+                    <option value="+++">+++</option>
+                    <option value="++++">++++</option>
+                    <option value="Unidad disponible">Unidad disponible</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-600 uppercase">Temperatura (°C)</label>
+                  <input 
+                    type="text" 
+                    name="salinaTemperatura" 
+                    value={formData.salinaTemperatura} 
+                    onChange={handleChange} 
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm" 
+                    placeholder="Ej: 22 o TA" 
+                  />
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-zinc-600">Autocontrol</label>
-              <select 
-                name="autocontrol" 
-                value={formData.autocontrol} 
-                onChange={handleChange} 
-                disabled={formData.requestedHemoderivative !== 'Globulos Rojos'}
-                className="w-full px-3 py-2 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm"
-              >
-                <option value="0">0</option>
-                <option value="+">+</option>
-                <option value="++">++</option>
-                <option value="+++">+++</option>
-                <option value="++++">++++</option>
-                <option value="Unidad disponible">Unidad disponible</option>
-              </select>
+
+            {/* INCUBACION PHASE */}
+            <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 space-y-3 relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500/80"></div>
+              <h5 className="text-xs font-bold text-amber-800 uppercase tracking-wider">Fase Incubación</h5>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-600 uppercase">Prueba Cruzada *</label>
+                  <select 
+                    name="incubacionPruebaCruzada" 
+                    value={formData.incubacionPruebaCruzada} 
+                    onChange={handleChange} 
+                    disabled={formData.requestedHemoderivative !== 'Globulos Rojos'}
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm font-semibold"
+                  >
+                    <option value="0">0</option>
+                    <option value="+">+</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-600 uppercase">Autocontrol *</label>
+                  <select 
+                    name="incubacionAutocontrol" 
+                    value={formData.incubacionAutocontrol} 
+                    onChange={handleChange} 
+                    disabled={formData.requestedHemoderivative !== 'Globulos Rojos'}
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm"
+                  >
+                    <option value="0">0</option>
+                    <option value="+">+</option>
+                    <option value="++">++</option>
+                    <option value="+++">+++</option>
+                    <option value="++++">++++</option>
+                    <option value="Unidad disponible">Unidad disponible</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-600 uppercase">Temperatura (°C)</label>
+                  <input 
+                    type="text" 
+                    name="incubacionTemperatura" 
+                    value={formData.incubacionTemperatura} 
+                    onChange={handleChange} 
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm" 
+                    placeholder="Ej: 37" 
+                  />
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-zinc-600">Temperatura (°C)</label>
-              <input type="text" name="temperature" value={formData.temperature} onChange={handleChange} className="w-full px-3 py-2 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm" placeholder="Ej: 37" />
+
+            {/* PROTEICA PHASE */}
+            <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 space-y-3 relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-red-500/80"></div>
+              <h5 className="text-xs font-bold text-red-800 uppercase tracking-wider">Fase Proteica (Coombs)</h5>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-600 uppercase">Prueba Cruzada *</label>
+                  <select 
+                    name="proteicaPruebaCruzada" 
+                    value={formData.proteicaPruebaCruzada} 
+                    onChange={handleChange} 
+                    disabled={formData.requestedHemoderivative !== 'Globulos Rojos'}
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm font-semibold"
+                  >
+                    <option value="0">0</option>
+                    <option value="+">+</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-600 uppercase">Autocontrol *</label>
+                  <select 
+                    name="proteicaAutocontrol" 
+                    value={formData.proteicaAutocontrol} 
+                    onChange={handleChange} 
+                    disabled={formData.requestedHemoderivative !== 'Globulos Rojos'}
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm"
+                  >
+                    <option value="0">0</option>
+                    <option value="+">+</option>
+                    <option value="++">++</option>
+                    <option value="+++">+++</option>
+                    <option value="++++">++++</option>
+                    <option value="Unidad disponible">Unidad disponible</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-zinc-600 uppercase">Temperatura (°C)</label>
+                  <input 
+                    type="text" 
+                    name="proteicaTemperatura" 
+                    value={formData.proteicaTemperatura} 
+                    onChange={handleChange} 
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm" 
+                    placeholder="Ej: 37" 
+                  />
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -654,11 +950,12 @@ export const BloodTestForm: React.FC<BloodTestFormProps> = ({
           <label className="text-xs font-medium text-zinc-700">Bacteriólogo Responsable *</label>
           <select 
             name="bacteriologist" 
-            value={formData.bacteriologist} 
+            value={formData.bacteriologist || ''} 
             onChange={handleChange} 
             required
             className="w-full px-3 py-2 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm"
           >
+            <option value="">-- SELECCIONE BACTERIÓLOGO --</option>
             {PROFESSIONALS.map(p => (
               <option key={p.id} value={p.name}>{p.name}</option>
             ))}

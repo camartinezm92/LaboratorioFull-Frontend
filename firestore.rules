@@ -73,9 +73,12 @@ service cloud.firestore {
         );
     }
 
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
     function isSuperAdmin() {
       return isAuthenticated() && 
-             'email' in request.auth.token && 
              (request.auth.token.email.lower() == "ingbiomedico@ucihonda.com.co" || 
               request.auth.token.email.lower() == "apoyodiagnostico@hemosheet.iam.gserviceaccount.com");
     }
@@ -319,6 +322,15 @@ service cloud.firestore {
              data.lastLogin is string;
     }
 
+    // Domain Validator for Patient Checks
+    function isValidPatientCheck(data) {
+      return hasRequiredFields(['reporteSIHEVI', 'labsMultitransfundidos', 'updatedAt', 'updatedBy']) &&
+             data.reporteSIHEVI is bool &&
+             data.labsMultitransfundidos is bool &&
+             data.updatedAt is string &&
+             data.updatedBy is string;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -369,6 +381,12 @@ service cloud.firestore {
       allow create: if hasSectionPermission('hemoderivados', 'crear') && isValidTransfusionUseRecord(request.resource.data) && request.resource.data.uid == request.auth.uid;
       allow update: if (hasSectionPermission('hemoderivados', 'editar') || isAdmin()) && isValidTransfusionUseRecord(request.resource.data) && uidNotModified();
       allow delete: if hasSectionPermission('hemoderivados', 'eliminar') || isAdmin();
+    }
+
+    match /usoPatientChecks/{patientId} {
+      allow read: if hasSectionPermission('hemoderivados', 'consultar');
+      allow create, update: if (hasSectionPermission('hemoderivados', 'crear') || hasSectionPermission('hemoderivados', 'editar') || isAdmin()) && isValidPatientCheck(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /finalDisposition/{recordId} {

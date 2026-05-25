@@ -19,7 +19,7 @@ export const LaboratorioAnalysis: React.FC = () => {
   const [studyType, setStudyType] = useState('');
   const [receptionDate, setReceptionDate] = useState(getColombiaDateString());
   const [sampleDate, setSampleDate] = useState(getColombiaDateString());
-  const [bacteriologist, setBacteriologist] = useState(PROFESSIONALS[0].name);
+  const [bacteriologist, setBacteriologist] = useState('');
   const [generalAnalysis, setGeneralAnalysis] = useState('');
   
   const [parameters, setParameters] = useState<LabParameter[]>(PARAMETER_ORDER.map(name => ({
@@ -426,6 +426,10 @@ export const LaboratorioAnalysis: React.FC = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!bacteriologist) {
+      setError('Por favor seleccione el Bacteriólogo Responsable de realizar la validación.');
+      return;
+    }
     if (!patientName || parameters.length === 0 || !parameters[0].name) {
       setError('Por favor complete el nombre del paciente y al menos un parámetro.');
       return;
@@ -855,6 +859,7 @@ export const LaboratorioAnalysis: React.FC = () => {
                   onChange={(e) => setBacteriologist(e.target.value)}
                   className="w-full px-4 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-brand-500 outline-none bg-white"
                 >
+                  <option value="">-- SELECCIONE BACTERIÓLOGO --</option>
                   {PROFESSIONALS.map(p => (
                     <option key={p.id} value={p.name}>{p.name}</option>
                   ))}

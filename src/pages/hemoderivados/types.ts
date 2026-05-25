@@ -20,6 +20,25 @@ export interface BloodTestRecord {
   autocontrol?: '0' | '+' | '++' | '+++' | '++++' | 'Unidad disponible' | '';
   temperature?: string;
   
+  // Blood validation fields A, B, AB, D
+  patientBloodA?: '0' | '+';
+  patientBloodB?: '0' | '+';
+  patientBloodAB?: '0' | '+';
+  patientBloodD?: '0' | '+';
+
+  // Phase-specific fields for irregular antibodies screening / cross-match
+  salinaPruebaCruzada?: '0' | '+';
+  salinaAutocontrol?: '0' | '+' | '++' | '+++' | '++++' | 'Unidad disponible' | '';
+  salinaTemperatura?: string;
+
+  incubacionPruebaCruzada?: '0' | '+';
+  incubacionAutocontrol?: '0' | '+' | '++' | '+++' | '++++' | 'Unidad disponible' | '';
+  incubacionTemperatura?: string;
+
+  proteicaPruebaCruzada?: '0' | '+';
+  proteicaAutocontrol?: '0' | '+' | '++' | '+++' | '++++' | 'Unidad disponible' | '';
+  proteicaTemperatura?: string;
+  
   provider?: 'Hemolife' | 'Hemocentro' | 'FUHECO' | '';
   requestedHemoderivative?: 'Globulos Rojos' | 'Plasma Fresco Congelado' | 'Plaquetas (Estándar)' | 'Plaquetas AFERESIS' | 'Crioprecipitado' | '';
   requestType?: 'Reserva' | 'Transfusion' | 'Urgencia Vital' | '';
