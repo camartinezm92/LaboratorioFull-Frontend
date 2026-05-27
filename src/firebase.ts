@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { getAuth, signInAnonymously, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, getDocFromServer } from 'firebase/firestore';
 
 // Import the Firebase configuration
@@ -15,6 +15,52 @@ const googleProvider = new GoogleAuthProvider();
 export const loginWithGoogle = () => signInWithPopup(auth, googleProvider);
 export const loginAnonymously = () => signInAnonymously(auth);
 export const logout = () => signOut(auth);
+
+export const loginWithUsernameAndPassword = async (username: string, password: string) => {
+  const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || 'Fallo de autenticación');
+  }
+
+  const data = await response.json();
+  if (data.firebaseEmail) {
+    try {
+      // Authenticate the user client-side with standard email and password credentials.
+      // This represents the synchronized credential set up securely by the server.
+      const userCredential = await signInWithEmailAndPassword(auth, data.firebaseEmail, password);
+      return userCredential.user;
+    } catch (authErr: any) {
+      console.error('Firebase Client Auth Error during login:', authErr);
+      const errMsg = authErr?.message || String(authErr);
+      
+      // Check if the error indicates Identity Toolkit is disabled in GCP
+      if (
+        errMsg.includes('identitytoolkit') || 
+        errMsg.includes('Identity Toolkit API') ||
+        errMsg.includes('403') ||
+        errMsg.includes('auth/internal-error') ||
+        errMsg.includes('PERMISSION_DENIED')
+      ) {
+        throw new Error(
+          'El servicio de Autenticación de Firebase (Identity Toolkit API) no está habilitado en su proyecto de Google Cloud. ' +
+          'Para habilitarlo, por favor visite el siguiente enlace e inténtelo de nuevo:\n\n' +
+          'Consola Google Cloud (Proyecto: 93016382103):\n' +
+          'https://console.developers.google.com/apis/api/identitytoolkit.googleapis.com/overview?project=93016382103\n\n' +
+          'O active "Email/Password" en la consola de Firebase Authentication de su proyecto.'
+        );
+      }
+      throw authErr;
+    }
+  } else {
+    throw new Error('No se recibió la información de autenticación desde el servidor');
+  }
+};
 
 // Error handling
 export enum OperationType {

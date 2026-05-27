@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { FileSpreadsheet, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -64,10 +63,8 @@ export const ExcelExportButton: React.FC<ExcelExportButtonProps> = ({
                     value = param ? `${param.value} ${param.unit}` : '';
                   } else {
                     value = docData[key];
-                    // Handle Firestore Timestamps
-                    if (value && typeof value === 'object' && typeof value.toDate === 'function') {
-                      value = formatColombia(value.toDate());
-                    } else if (typeof value === 'string' && (key.endsWith('At') || key === 'createdAt' || key === 'updatedAt' || key === 'testDate')) {
+                    // Handle Firestore Timestamps and ISO strings
+                    if (value) {
                       value = formatColombia(value);
                     }
                   }
@@ -105,9 +102,7 @@ export const ExcelExportButton: React.FC<ExcelExportButtonProps> = ({
                 let value = docData[key];
                 
                 // Handle Firestore Timestamps and date strings
-                if (value && typeof value === 'object' && typeof value.toDate === 'function') {
-                  flattened[key] = formatColombia(value.toDate());
-                } else if (typeof value === 'string' && (key.endsWith('At') || key === 'createdAt' || key === 'updatedAt' || key === 'testDate')) {
+                if (value) {
                   flattened[key] = formatColombia(value);
                 } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
                   Object.keys(value).forEach(subKey => {

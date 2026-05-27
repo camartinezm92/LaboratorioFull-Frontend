@@ -9,13 +9,23 @@ interface UsoRecordCardProps {
   onEdit?: (record: TransfusionUseRecord) => void;
   currentUserUid?: string;
   isAdmin?: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-export const UsoRecordCard: React.FC<UsoRecordCardProps> = ({ record, onDelete, onEdit, currentUserUid, isAdmin }) => {
+export const UsoRecordCard: React.FC<UsoRecordCardProps> = ({ 
+  record, 
+  onDelete, 
+  onEdit, 
+  currentUserUid, 
+  isAdmin,
+  canEdit: customCanEdit,
+  canDelete: customCanDelete
+}) => {
   const [showDetails, setShowDetails] = useState(false);
   const isOwner = currentUserUid === record.uid;
-  const canDelete = isAdmin;
-  const canEdit = isAdmin;
+  const canDelete = customCanDelete !== undefined ? customCanDelete : isAdmin;
+  const canEdit = customCanEdit !== undefined ? customCanEdit : isAdmin;
 
   return (
     <div className="bg-white rounded-3xl p-6 shadow-sm border border-zinc-100 hover:shadow-md transition-shadow relative group">

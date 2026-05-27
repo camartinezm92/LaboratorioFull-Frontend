@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { ReceivedUnitRecord } from '../types';
 import { Save, AlertCircle, Plus, Trash2, ChevronDown, ChevronUp, Layers, CheckCircle } from 'lucide-react';

@@ -1,10 +1,9 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Trash2, History, LogIn, ShieldCheck, CheckCircle, Truck } from 'lucide-react';
+import { ArrowLeft, Trash2, History, LogIn, ShieldCheck, CheckCircle, Truck, Lock } from 'lucide-react';
 import { DisposicionForm } from '../components/DisposicionForm';
 import { FinalDispositionRecord } from '../types';
-import { auth, db, loginWithGoogle, handleFirestoreError, OperationType } from '../../../firebase';
+import { auth, db, loginWithGoogle, logout, handleFirestoreError, OperationType } from '../../../firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, onSnapshot, query, orderBy, where, getDocs, doc, deleteDoc } from 'firebase/firestore';
 import { DeleteConfirmationModal } from '../../laboratorio/components/DeleteConfirmationModal';
@@ -20,6 +19,17 @@ export const DisposicionApp: React.FC = () => {
   
   const [isSystemUnlocked, setIsSystemUnlocked] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userPermissions, setUserPermissions] = useState<{
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
+  }>({
+    crear: true,
+    consultar: true,
+    editar: true,
+    eliminar: true
+  });
   const [isSyncing, setIsSyncing] = useState(false);
   const [editingRecord, setEditingRecord] = useState<FinalDispositionRecord | null>(null);
 
@@ -32,10 +42,69 @@ export const DisposicionApp: React.FC = () => {
 
   useEffect(() => {
     document.title = 'Disposición Final - Hemocomponentes';
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      setIsAuthReady(true);
-      if (!currentUser) setIsSystemUnlocked(false);
+      if (!currentUser) {
+        setIsSystemUnlocked(false);
+        setIsAdmin(false);
+        setIsAuthReady(true);
+      } else {
+        // Auto-unlock system if current user is active and registered in the database
+        try {
+          const isSuper = currentUser.uid === 'admin' || currentUser.email?.toLowerCase() === 'ingbiomedico@ucihonda.com.co';
+          if (isSuper) {
+            setIsAdmin(true);
+            setIsSystemUnlocked(true);
+            setUserPermissions({
+              crear: true,
+              consultar: true,
+              editar: true,
+              eliminar: true
+            });
+            setIsAuthReady(true);
+            return;
+          }
+
+          const { getDoc, doc } = await import('firebase/firestore');
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            if (data.active) {
+              setIsSystemUnlocked(true);
+              setIsAdmin(data.role === 'admin');
+
+              // Fallbacks for older individual permissions
+              const p = data.permissions || {};
+              const hemoPerms = p.hemoderivados || {};
+              const dispPerms = p.disposicion || p.disposicionFinal || {};
+
+              setUserPermissions({
+                crear: hemoPerms.crear !== undefined ? hemoPerms.crear : (dispPerms.crear !== undefined ? dispPerms.crear : true),
+                consultar: hemoPerms.consultar !== undefined ? hemoPerms.consultar : (dispPerms.consultar !== undefined ? dispPerms.consultar : true),
+                editar: hemoPerms.editar !== undefined ? hemoPerms.editar : (dispPerms.editar !== undefined ? dispPerms.editar : true),
+                eliminar: hemoPerms.eliminar !== undefined ? hemoPerms.eliminar : (dispPerms.eliminar !== undefined ? dispPerms.eliminar : true)
+              });
+            } else {
+              setIsSystemUnlocked(false);
+            }
+          } else if (currentUser.email?.toLowerCase().endsWith('@ucihonda.com.co')) {
+            setIsSystemUnlocked(true);
+            setUserPermissions({
+              crear: true,
+              consultar: true,
+              editar: true,
+              eliminar: true
+            });
+          } else {
+            setIsSystemUnlocked(false);
+          }
+        } catch (error) {
+          console.error('Error pre-loading permissions:', error);
+          setIsSystemUnlocked(false);
+        } finally {
+          setIsAuthReady(true);
+        }
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -72,7 +141,9 @@ export const DisposicionApp: React.FC = () => {
       }
     };
 
-    cleanupOldRecords();
+    if (isAdmin || userPermissions.eliminar) {
+      cleanupOldRecords();
+    }
 
     const q = query(collection(db, path), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -88,22 +159,56 @@ export const DisposicionApp: React.FC = () => {
     return () => unsubscribe();
   }, [isAuthReady, user, isSystemUnlocked]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     const normalizedUsername = username.trim().toLowerCase();
+    const isSuperAdminEmail = user?.email?.toLowerCase() === 'ingbiomedico@ucihonda.com.co';
+
     if (
       (normalizedUsername === 'disposicionhemo' && password === 'Disposicionhemo2026*') ||
       (normalizedUsername === 'admin' && password === 'admin') ||
-      (user?.email === 'ingbiomedico@ucihonda.com.co')
+      isSuperAdminEmail
     ) {
       setIsSystemUnlocked(true);
-      if (normalizedUsername === 'admin' || user?.email === 'ingbiomedico@ucihonda.com.co') {
+      if (normalizedUsername === 'admin' || isSuperAdminEmail) {
         setIsAdmin(true);
       }
-    } else {
-      setLoginError('Usuario o contraseña incorrectos.');
+      return;
     }
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.user && data.user.active) {
+          setIsSystemUnlocked(true);
+          const rootRole = data.user.role === 'admin';
+          setIsAdmin(rootRole);
+
+          const p = data.user.permissions || {};
+          const hemoPerms = p.hemoderivados || {};
+          const dispPerms = p.disposicion || p.disposicionFinal || {};
+
+          setUserPermissions({
+            crear: hemoPerms.crear !== undefined ? hemoPerms.crear : (dispPerms.crear !== undefined ? dispPerms.crear : true),
+            consultar: hemoPerms.consultar !== undefined ? hemoPerms.consultar : (dispPerms.consultar !== undefined ? dispPerms.consultar : true),
+            editar: hemoPerms.editar !== undefined ? hemoPerms.editar : (dispPerms.editar !== undefined ? dispPerms.editar : true),
+            eliminar: hemoPerms.eliminar !== undefined ? hemoPerms.eliminar : (dispPerms.eliminar !== undefined ? dispPerms.eliminar : true)
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error("Error on dynamic login in DisposicionApp:", err);
+    }
+
+    setLoginError('Usuario o contraseña incorrectos.');
   };
 
   const handleSubmit = async (formData: Omit<FinalDispositionRecord, 'id' | 'createdAt' | 'uid' | 'userEmail'>) => {
@@ -191,7 +296,7 @@ export const DisposicionApp: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {user && isSystemUnlocked && (
+            {user && isSystemUnlocked && (isAdmin || userPermissions.crear || showForm) && (
               <button onClick={showForm ? () => setShowForm(false) : handleNewRecord} className="flex items-center gap-2 px-4 py-2 bg-rose-600 text-white rounded-xl font-medium hover:bg-rose-700 transition-all shadow-md shadow-rose-100">
                 {showForm ? <History size={18} /> : <Trash2 size={18} />}
                 {showForm ? 'Ver Historial' : 'Nuevo Registro'}
@@ -204,26 +309,43 @@ export const DisposicionApp: React.FC = () => {
       <main className="max-w-7xl mx-auto px-6 py-8">
         {!user ? (
           <div className="max-w-md mx-auto mt-20 text-center space-y-6">
-            <div className="bg-rose-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto"><ShieldCheck className="text-rose-600" size={40} /></div>
-            <h2 className="text-3xl font-bold text-zinc-900">Paso 1: Autenticación</h2>
-            <button onClick={loginWithGoogle} className="w-full bg-rose-600 text-white py-4 rounded-2xl font-bold text-lg shadow-xl shadow-rose-100 hover:bg-rose-700 transition-all flex items-center justify-center gap-3"><LogIn size={24} />Continuar con Google</button>
+            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-red-600 shadow-sm">
+              <Lock size={40} />
+            </div>
+            <h2 className="text-3xl font-bold text-zinc-900">Acceso Restringido</h2>
+            <p className="text-zinc-500 leading-relaxed">
+              No ha iniciado sesión en el sistema. Por favor ingrese desde la pantalla principal para continuar.
+            </p>
+            <button
+              onClick={() => navigate('/')}
+              className="w-full bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-[0.98] flex items-center justify-center gap-3 shadow-lg"
+            >
+              Ir a la Pantalla Principal
+            </button>
           </div>
         ) : !isSystemUnlocked ? (
           <div className="max-w-md mx-auto mt-20 text-center space-y-6">
-            <div className="bg-rose-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto"><ShieldCheck className="text-rose-600" size={40} /></div>
-            <h2 className="text-3xl font-bold text-zinc-900">Paso 2: Acceso al Sistema</h2>
-            <form onSubmit={handleLogin} className="bg-white p-8 rounded-3xl shadow-xl border border-zinc-100 space-y-6 text-left">
-              {loginError && <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium border border-red-100">{loginError}</div>}
-              <div>
-                <label className="block text-sm font-bold text-zinc-700 mb-2">Usuario</label>
-                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-rose-500 outline-none" placeholder="disposicionhemo" required />
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-zinc-700 mb-2">Contraseña</label>
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-rose-500 outline-none" placeholder="••••••••" required />
-              </div>
-              <button type="submit" className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-bold text-lg shadow-xl hover:bg-zinc-800 transition-all">Desbloquear Sistema</button>
-            </form>
+            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-red-600 shadow-sm">
+              <Lock size={40} />
+            </div>
+            <h2 className="text-3xl font-bold text-zinc-900">Acceso No Autorizado</h2>
+            <p className="text-zinc-500 leading-relaxed">
+              Su usuario no tiene los permisos requeridos para gestionar el módulo de Disposición Final. Por favor, contacte a un administrador para activarlos.
+            </p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => logout()}
+                className="flex-1 bg-white border border-zinc-200 text-zinc-600 py-4 rounded-xl font-bold hover:bg-zinc-50 transition-all"
+              >
+                Cerrar Sesión
+              </button>
+              <button
+                onClick={() => navigate('/')}
+                className="flex-1 bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-md"
+              >
+                Ir a Inicio
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -235,22 +357,26 @@ export const DisposicionApp: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {records.map((record) => (
                     <div key={record.id} className="bg-white p-6 rounded-3xl shadow-sm border border-zinc-100 space-y-4 relative group">
-                      {isAdmin && (
+                      {(isAdmin || userPermissions.editar || userPermissions.eliminar) && (
                         <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
-                          <button
-                            onClick={() => handleEdit(record)}
-                            className="p-2 text-zinc-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl"
-                            title="Editar registro"
-                          >
-                            <History size={18} />
-                          </button>
-                          <button
-                            onClick={() => record.id && handleDeleteClick(record.id)}
-                            className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-xl"
-                            title="Eliminar registro"
-                          >
-                            <Trash2 size={18} />
-                          </button>
+                          {(isAdmin || userPermissions.editar) && (
+                            <button
+                              onClick={() => handleEdit(record)}
+                              className="p-2 text-zinc-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl"
+                              title="Editar registro"
+                            >
+                              <History size={18} />
+                            </button>
+                          )}
+                          {(isAdmin || userPermissions.eliminar) && (
+                            <button
+                              onClick={() => record.id && handleDeleteClick(record.id)}
+                              className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-xl"
+                              title="Eliminar registro"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          )}
                         </div>
                       )}
                       <div className="flex justify-between items-start pr-10">

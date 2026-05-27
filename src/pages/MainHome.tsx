@@ -1,9 +1,8 @@
-
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { Droplets, FlaskConical, Package, ArrowRight, Settings, LogOut, LogIn, Lock, ShieldAlert } from 'lucide-react';
-import { auth, logout, loginWithGoogle, db } from '../firebase';
+import { auth, logout, loginWithUsernameAndPassword, db } from '../firebase';
 import { getNowISO } from '../utils/dateUtils';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -14,6 +13,13 @@ export const MainHome: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
 
+  // Login form state
+  const [usernameInput, setUsernameInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [dbUser, setDbUser] = useState<any | null>(null);
+
   useEffect(() => {
     document.title = 'Apoyo Diagnóstico';
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
@@ -22,9 +28,9 @@ export const MainHome: React.FC = () => {
         // Record user profile for admin management
         try {
           await setDoc(doc(db, 'user_profiles', u.uid), {
-            email: u.email,
-            displayName: u.displayName,
-            photoURL: u.photoURL,
+            email: u.email || 'no-email',
+            displayName: u.displayName || u.uid,
+            photoURL: u.photoURL || '',
             lastLogin: getNowISO(),
             uid: u.uid
           }, { merge: true });
@@ -32,16 +38,30 @@ export const MainHome: React.FC = () => {
           console.error("Error recording profile:", e);
         }
 
-        const isSuper = u.email?.toLowerCase() === "ingbiomedico@ucihonda.com.co";
+        const isSuper = u.uid === 'admin' || u.email?.toLowerCase() === "ingbiomedico@ucihonda.com.co";
         if (isSuper) {
           setIsAuthorized(true);
+          try {
+            const userDoc = await getDoc(doc(db, 'users', u.uid));
+            if (userDoc.exists()) {
+              setDbUser(userDoc.data());
+            }
+          } catch(err) {
+            console.error("Error reading admin data:", err);
+          }
           setLoading(false);
         } else {
           // Check if user exists in 'users' collection and is active
           try {
             const userDoc = await getDoc(doc(db, 'users', u.uid));
-            if (userDoc.exists() && userDoc.data().active) {
-              setIsAuthorized(true);
+            if (userDoc.exists()) {
+              const uData = userDoc.data();
+              setDbUser(uData);
+              if (uData.active) {
+                setIsAuthorized(true);
+              } else {
+                setIsAuthorized(false);
+              }
             } else {
               setIsAuthorized(false);
             }
@@ -52,6 +72,7 @@ export const MainHome: React.FC = () => {
           setLoading(false);
         }
       } else {
+        setDbUser(null);
         setIsAuthorized(null);
         setLoading(false);
       }
@@ -59,7 +80,22 @@ export const MainHome: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  const isSuperAdmin = user?.email?.toLowerCase() === "ingbiomedico@ucihonda.com.co";
+  const isSuperAdmin = user?.uid === "admin" || dbUser?.role === "admin" || user?.email?.toLowerCase() === "ingbiomedico@ucihonda.com.co";
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    setIsLoggingIn(true);
+
+    try {
+      await loginWithUsernameAndPassword(usernameInput, passwordInput);
+    } catch (err: any) {
+      console.error("Login submission error:", err);
+      setLoginError(err.message || 'Error de inicio de sesión');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -75,7 +111,7 @@ export const MainHome: React.FC = () => {
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="max-w-md w-full bg-white p-12 rounded-[3rem] shadow-xl border border-zinc-200 text-center"
+          className="max-w-md w-full bg-white p-10 md:p-12 rounded-[3rem] shadow-xl border border-zinc-200 text-center"
         >
           <div className="bg-zinc-50 p-6 rounded-[2.5rem] shadow-sm inline-block mb-8">
             <img 
@@ -87,19 +123,59 @@ export const MainHome: React.FC = () => {
               }}
             />
           </div>
-          <h1 className="text-3xl font-bold text-zinc-900 mb-4 tracking-tight">
+          <h1 className="text-3xl font-bold text-zinc-900 mb-2 tracking-tight">
             Apoyo Diagnóstico
           </h1>
-          <p className="text-zinc-500 mb-10 font-medium leading-relaxed">
-            Bienvenido al sistema de gestión de UCI Honda. Por favor, inicie sesión para acceder a los módulos.
+          <p className="text-zinc-500 mb-8 font-medium leading-relaxed">
+            UCI Honda - Acceso de Personal Autorizado
           </p>
-          <button
-            onClick={() => loginWithGoogle()}
-            className="w-full flex items-center justify-center gap-3 bg-zinc-900 text-white py-4 rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 active:scale-[0.98]"
-          >
-            <LogIn size={20} />
-            Iniciar Sesión con Google
-          </button>
+
+          <form onSubmit={handleLoginSubmit} className="space-y-4 text-left">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Usuario</label>
+              <input
+                type="text"
+                required
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-950 outline-none transition-all placeholder-zinc-300"
+                placeholder="Ingrese su usuario..."
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Contraseña</label>
+              <input
+                type="password"
+                required
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-950 outline-none transition-all placeholder-zinc-300"
+                placeholder="••••••••"
+              />
+            </div>
+
+            {loginError && (
+              <div className="text-sm bg-rose-50 text-rose-600 p-3 rounded-xl border border-rose-100 font-medium text-center">
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full flex items-center justify-center gap-2 bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg active:scale-[0.98] disabled:bg-zinc-400 cursor-pointer text-center"
+            >
+              {isLoggingIn ? (
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+              ) : (
+                <>
+                  <LogIn size={20} />
+                  Ingresar al Sistema
+                </>
+              )}
+            </button>
+          </form>
+
           <p className="mt-8 text-xs text-zinc-400 font-medium uppercase tracking-widest">
             UCI Honda Tecnología
           </p>
@@ -121,16 +197,13 @@ export const MainHome: React.FC = () => {
           </div>
           <h1 className="text-2xl font-bold text-zinc-900 mb-4">Acceso No Autorizado</h1>
           <p className="text-zinc-500 mb-8 font-medium leading-relaxed">
-            Su cuenta (<span className="text-zinc-900 font-bold">{user.email}</span>) no tiene permisos activos para acceder al sistema.
+            Su usuario (<span className="text-zinc-900 font-bold">{user.uid}</span>) no tiene permisos activos para acceder al sistema.
           </p>
           <div className="bg-zinc-50 p-4 rounded-2xl mb-8 text-left">
             <p className="text-xs text-zinc-400 font-bold uppercase mb-2">Instrucciones:</p>
             <p className="text-sm text-zinc-600 leading-relaxed">
-              Contacte al administrador para habilitar su acceso. Proporcione su correo y el siguiente ID si es necesario:
+              Contacte al administrador para habilitar su acceso.
             </p>
-            <code className="block mt-2 p-2 bg-white border border-zinc-200 rounded-lg text-[10px] font-mono text-zinc-500 break-all">
-              {user.uid}
-            </code>
           </div>
           <button
             onClick={() => logout()}

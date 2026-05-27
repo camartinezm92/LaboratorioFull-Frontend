@@ -68,8 +68,8 @@ service cloud.firestore {
         (
           isSuperAdmin() ||
           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' && 
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true)
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin' && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('active', false) == true)
         );
     }
 
@@ -88,16 +88,27 @@ service cloud.firestore {
              (
                isSuperAdmin() ||
                (
+                 // Case 1: User document exists and is active
                  exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-                 get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true &&
+                 get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('active', false) == true &&
                  (
-                   get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-                   (section in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions && 
-                    action in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions[section] &&
-                    get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions[section][action] == true)
+                   get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin' ||
+                   get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('permissions', {}).get(section, {}).get(action, false) == true
                  )
+               ) ||
+               (
+                 // Case 2: User document does not exist, but they are authenticated under our organization
+                 !exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+                 'email' in request.auth.token &&
+                 request.auth.token.email.lower().matches(".*@ucihonda\\.com\\.co$")
                )
              );
+    }
+
+    function hasHemoPermission(section, action) {
+      return hasSectionPermission('hemoderivados', action) || 
+             hasSectionPermission(section, action) ||
+             (section == 'disposicion' && hasSectionPermission('disposicionFinal', action));
     }
 
     function uidUnchanged() {
@@ -340,14 +351,14 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isSuperAdmin());
-      allow write: if isSuperAdmin();
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
     }
 
     match /user_profiles/{userId} {
-      allow read: if isSuperAdmin() || isOwner(userId);
-      allow create, update: if isOwner(userId) && isValidUserProfile(request.resource.data);
-      allow delete: if isSuperAdmin();
+      allow read: if isAdmin() || isOwner(userId);
+      allow create, update: if (isOwner(userId) || isAdmin()) && isValidUserProfile(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /labResults/{recordId} {
@@ -358,42 +369,42 @@ service cloud.firestore {
     }
 
     match /bloodTestRecords/{recordId} {
-      allow read: if hasSectionPermission('hemoderivados', 'consultar');
-      allow create: if hasSectionPermission('hemoderivados', 'crear') && isValidBloodTestRecord(request.resource.data) && request.resource.data.uid == request.auth.uid;
+      allow read: if hasHemoPermission('preTransfusional', 'consultar');
+      allow create: if hasHemoPermission('preTransfusional', 'crear') && isValidBloodTestRecord(request.resource.data) && request.resource.data.uid == request.auth.uid;
       allow update: if (
-          (hasSectionPermission('hemoderivados', 'editar') && uidNotModified()) ||
-          (hasSectionPermission('hemoderivados', 'aceptar') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acceptedBy', 'acceptedAt'])) ||
-          (hasSectionPermission('hemoderivados', 'devolver') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['returned', 'returnComment', 'returnedAt'])) ||
+          (hasHemoPermission('preTransfusional', 'editar') && uidNotModified()) ||
+          (hasHemoPermission('preTransfusional', 'aceptar') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acceptedBy', 'acceptedAt'])) ||
+          (hasHemoPermission('preTransfusional', 'devolver') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['returned', 'returnComment', 'returnedAt'])) ||
           isAdmin()
         ) && isValidBloodTestRecord(request.resource.data);
-      allow delete: if hasSectionPermission('hemoderivados', 'eliminar') || isAdmin();
+      allow delete: if hasHemoPermission('preTransfusional', 'eliminar') || isAdmin();
     }
 
     match /receivedUnits/{recordId} {
-      allow read: if hasSectionPermission('hemoderivados', 'consultar');
-      allow create: if hasSectionPermission('hemoderivados', 'crear') && isValidReceivedUnitRecord(request.resource.data) && request.resource.data.uid == request.auth.uid;
-      allow update: if (hasSectionPermission('hemoderivados', 'editar') || isAdmin()) && isValidReceivedUnitRecord(request.resource.data) && uidNotModified();
-      allow delete: if hasSectionPermission('hemoderivados', 'eliminar') || isAdmin();
+      allow read: if hasHemoPermission('recepcion', 'consultar');
+      allow create: if hasHemoPermission('recepcion', 'crear') && isValidReceivedUnitRecord(request.resource.data) && request.resource.data.uid == request.auth.uid;
+      allow update: if (hasHemoPermission('recepcion', 'editar') || isAdmin()) && isValidReceivedUnitRecord(request.resource.data) && uidNotModified();
+      allow delete: if hasHemoPermission('recepcion', 'eliminar') || isAdmin();
     }
 
     match /transfusionUse/{recordId} {
-      allow read: if hasSectionPermission('hemoderivados', 'consultar');
-      allow create: if hasSectionPermission('hemoderivados', 'crear') && isValidTransfusionUseRecord(request.resource.data) && request.resource.data.uid == request.auth.uid;
-      allow update: if (hasSectionPermission('hemoderivados', 'editar') || isAdmin()) && isValidTransfusionUseRecord(request.resource.data) && uidNotModified();
-      allow delete: if hasSectionPermission('hemoderivados', 'eliminar') || isAdmin();
+      allow read: if hasHemoPermission('uso', 'consultar');
+      allow create: if hasHemoPermission('uso', 'crear') && isValidTransfusionUseRecord(request.resource.data) && request.resource.data.uid == request.auth.uid;
+      allow update: if (hasHemoPermission('uso', 'editar') || isAdmin()) && isValidTransfusionUseRecord(request.resource.data) && uidNotModified();
+      allow delete: if hasHemoPermission('uso', 'eliminar') || isAdmin();
     }
 
     match /usoPatientChecks/{patientId} {
-      allow read: if hasSectionPermission('hemoderivados', 'consultar');
-      allow create, update: if (hasSectionPermission('hemoderivados', 'crear') || hasSectionPermission('hemoderivados', 'editar') || isAdmin()) && isValidPatientCheck(request.resource.data);
+      allow read: if hasHemoPermission('uso', 'consultar');
+      allow create, update: if (hasHemoPermission('uso', 'crear') || hasHemoPermission('uso', 'editar') || isAdmin()) && isValidPatientCheck(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /finalDisposition/{recordId} {
-      allow read: if hasSectionPermission('hemoderivados', 'consultar');
-      allow create: if hasSectionPermission('hemoderivados', 'crear') && isValidFinalDispositionRecord(request.resource.data) && request.resource.data.uid == request.auth.uid;
-      allow update: if (hasSectionPermission('hemoderivados', 'editar') || isAdmin()) && isValidFinalDispositionRecord(request.resource.data) && uidNotModified();
-      allow delete: if hasSectionPermission('hemoderivados', 'eliminar') || isAdmin();
+      allow read: if hasHemoPermission('disposicion', 'consultar');
+      allow create: if hasHemoPermission('disposicion', 'crear') && isValidFinalDispositionRecord(request.resource.data) && request.resource.data.uid == request.auth.uid;
+      allow update: if (hasHemoPermission('disposicion', 'editar') || isAdmin()) && isValidFinalDispositionRecord(request.resource.data) && uidNotModified();
+      allow delete: if hasHemoPermission('disposicion', 'eliminar') || isAdmin();
     }
 
     match /supplies/{supplyId} {

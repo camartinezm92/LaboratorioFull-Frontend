@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { TransfusionUseRecord, ReceivedUnitRecord, BloodTestRecord } from '../types';
 import { getColombiaDateString } from '../../../utils/dateUtils';

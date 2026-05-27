@@ -204,21 +204,48 @@
       "description": "A user of the system with specific permissions.",
       "type": "object",
       "properties": {
+        "username": { "type": "string" },
+        "password": { "type": "string" },
         "email": { "type": "string" },
         "role": { "type": "string", "enum": ["admin", "user"] },
         "active": { "type": "boolean" },
         "permissions": {
           "type": "object",
           "properties": {
-            "hemoderivados": {
+            "recepcion": {
               "type": "object",
               "properties": {
                 "crear": { "type": "boolean" },
                 "consultar": { "type": "boolean" },
                 "editar": { "type": "boolean" },
-                "eliminar": { "type": "boolean" },
-                "aceptar": { "type": "boolean" },
-                "devolver": { "type": "boolean" }
+                "eliminar": { "type": "boolean" }
+              }
+            },
+            "preTransfusional": {
+              "type": "object",
+              "properties": {
+                "crear": { "type": "boolean" },
+                "consultar": { "type": "boolean" },
+                "editar": { "type": "boolean" },
+                "eliminar": { "type": "boolean" }
+              }
+            },
+            "uso": {
+              "type": "object",
+              "properties": {
+                "crear": { "type": "boolean" },
+                "consultar": { "type": "boolean" },
+                "editar": { "type": "boolean" },
+                "eliminar": { "type": "boolean" }
+              }
+            },
+            "disposicion": {
+              "type": "object",
+              "properties": {
+                "crear": { "type": "boolean" },
+                "consultar": { "type": "boolean" },
+                "editar": { "type": "boolean" },
+                "eliminar": { "type": "boolean" }
               }
             },
             "laboratorio": {
@@ -240,7 +267,19 @@
           }
         }
       },
-      "required": ["email", "role", "active"]
+      "required": ["username", "password", "email", "role", "active"]
+    },
+    "PatientCheck": {
+      "title": "Patient Check",
+      "description": "Checks performed on multitransfused patients.",
+      "type": "object",
+      "properties": {
+        "reporteSIHEVI": { "type": "boolean" },
+        "labsMultitransfundidos": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["reporteSIHEVI", "labsMultitransfundidos", "updatedAt", "updatedBy"]
     }
   },
   "firestore": {
@@ -279,6 +318,10 @@
     "users": {
       "schema": "User",
       "description": "Collection of authorized users and their permissions."
+    },
+    "usoPatientChecks": {
+      "schema": "PatientCheck",
+      "description": "Collection of checks for multitransfused patients."
     }
   }
 }
