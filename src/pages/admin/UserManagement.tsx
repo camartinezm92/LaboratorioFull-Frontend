@@ -21,7 +21,7 @@ import {
   Lock,
   Unlock
 } from 'lucide-react';
-import { auth, db, handleFirestoreError, OperationType } from '../../firebase';
+import { auth, db, handleFirestoreError, OperationType, loginWithUsernameAndPassword } from '../../firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { 
   collection, 
@@ -31,17 +31,38 @@ import {
   deleteDoc, 
   updateDoc,
   query,
-  orderBy
+  orderBy,
+  getDoc
 } from 'firebase/firestore';
 
 interface UserPermissions {
-  hemoderivados: {
+  recepcion: {
     crear: boolean;
     consultar: boolean;
     editar: boolean;
     eliminar: boolean;
     aceptar: boolean;
     devolver: boolean;
+  };
+  preTransfusional: {
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
+    aceptar: boolean;
+    devolver: boolean;
+  };
+  uso: {
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
+  };
+  disposicion: {
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
   };
   laboratorio: {
     crear: boolean;
@@ -61,6 +82,8 @@ interface AppUser {
   role: 'admin' | 'user';
   active: boolean;
   permissions: UserPermissions;
+  username?: string;
+  password?: string;
 }
 
 interface DetectedProfile {
@@ -72,13 +95,33 @@ interface DetectedProfile {
 }
 
 const DEFAULT_PERMISSIONS: UserPermissions = {
-  hemoderivados: {
+  recepcion: {
     crear: false,
     consultar: false,
     editar: false,
     eliminar: false,
     aceptar: false,
     devolver: false,
+  },
+  preTransfusional: {
+    crear: false,
+    consultar: false,
+    editar: false,
+    eliminar: false,
+    aceptar: false,
+    devolver: false,
+  },
+  uso: {
+    crear: false,
+    consultar: false,
+    editar: false,
+    eliminar: false,
+  },
+  disposicion: {
+    crear: false,
+    consultar: false,
+    editar: false,
+    eliminar: false,
   },
   laboratorio: {
     crear: false,
@@ -93,6 +136,52 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
 };
 
 const SUPER_ADMIN_EMAIL = "ingbiomedico@ucihonda.com.co";
+
+const sanitizePermissions = (perms: any): UserPermissions => {
+  // If user has old unified hemoderivados permissions, we can map/migrate them dynamically
+  const oldHemo = perms?.hemoderivados || {};
+  
+  return {
+    recepcion: {
+      crear: perms?.recepcion?.crear ?? oldHemo?.crear ?? false,
+      consultar: perms?.recepcion?.consultar ?? oldHemo?.consultar ?? false,
+      editar: perms?.recepcion?.editar ?? oldHemo?.editar ?? false,
+      eliminar: perms?.recepcion?.eliminar ?? oldHemo?.eliminar ?? false,
+      aceptar: perms?.recepcion?.aceptar ?? oldHemo?.aceptar ?? false,
+      devolver: perms?.recepcion?.devolver ?? oldHemo?.devolver ?? false,
+    },
+    preTransfusional: {
+      crear: perms?.preTransfusional?.crear ?? oldHemo?.crear ?? false,
+      consultar: perms?.preTransfusional?.consultar ?? oldHemo?.consultar ?? false,
+      editar: perms?.preTransfusional?.editar ?? oldHemo?.editar ?? false,
+      eliminar: perms?.preTransfusional?.eliminar ?? oldHemo?.eliminar ?? false,
+      aceptar: perms?.preTransfusional?.aceptar ?? oldHemo?.aceptar ?? false,
+      devolver: perms?.preTransfusional?.devolver ?? oldHemo?.devolver ?? false,
+    },
+    uso: {
+      crear: perms?.uso?.crear ?? oldHemo?.crear ?? false,
+      consultar: perms?.uso?.consultar ?? oldHemo?.consultar ?? false,
+      editar: perms?.uso?.editar ?? oldHemo?.editar ?? false,
+      eliminar: perms?.uso?.eliminar ?? oldHemo?.eliminar ?? false,
+    },
+    disposicion: {
+      crear: perms?.disposicion?.crear ?? oldHemo?.crear ?? false,
+      consultar: perms?.disposicion?.consultar ?? oldHemo?.consultar ?? false,
+      editar: perms?.disposicion?.editar ?? oldHemo?.editar ?? false,
+      eliminar: perms?.disposicion?.eliminar ?? oldHemo?.eliminar ?? false,
+    },
+    laboratorio: {
+      crear: perms?.laboratorio?.crear ?? false,
+      consultar: perms?.laboratorio?.consultar ?? false,
+    },
+    insumos: {
+      crear: perms?.insumos?.crear ?? false,
+      consultar: perms?.insumos?.consultar ?? false,
+      consumir: perms?.insumos?.consumir ?? false,
+      eliminar: perms?.insumos?.eliminar ?? false,
+    }
+  };
+};
 
 export const UserManagement: React.FC = () => {
   const navigate = useNavigate();
@@ -111,18 +200,66 @@ export const UserManagement: React.FC = () => {
   const [formRole, setFormRole] = useState<'admin' | 'user'>('user');
   const [formActive, setFormActive] = useState(true);
   const [formPermissions, setFormPermissions] = useState<UserPermissions>(DEFAULT_PERMISSIONS);
+  const [formUsername, setFormUsername] = useState('');
+  const [formPassword, setFormPassword] = useState('');
+  const [deleteConfirmationUser, setDeleteConfirmationUser] = useState<AppUser | null>(null);
+
+  // Re-authentication credentials login form states
+  const [usernameInput, setUsernameInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
-        setIsSuperAdmin(user.email?.toLowerCase() === SUPER_ADMIN_EMAIL);
+        const isSuperEmail = user.email?.toLowerCase() === SUPER_ADMIN_EMAIL;
+        const isSuperUid = user.uid === 'admin';
+        if (isSuperEmail || isSuperUid) {
+          setIsSuperAdmin(true);
+          setLoading(false);
+        } else {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            if (userDoc.exists()) {
+              const uData = userDoc.data();
+              if (uData.active && uData.role === 'admin') {
+                setIsSuperAdmin(true);
+              } else {
+                setIsSuperAdmin(false);
+              }
+            } else {
+              setIsSuperAdmin(false);
+            }
+          } catch (error) {
+            console.error("Error reading user role:", error);
+            setIsSuperAdmin(false);
+          } finally {
+            setLoading(false);
+          }
+        }
       } else {
         setIsSuperAdmin(false);
+        setLoading(false);
       }
     });
     return () => unsubscribe();
   }, []);
+
+  const handleReauthLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    setIsLoggingIn(true);
+    try {
+      await loginWithUsernameAndPassword(usernameInput, passwordInput);
+    } catch (err: any) {
+      console.error("Re-auth error:", err);
+      setLoginError(err.message || 'Fallo de autenticación');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
 
   useEffect(() => {
     if (!currentUser) return;
@@ -166,7 +303,9 @@ export const UserManagement: React.FC = () => {
       setFormUid(user.id);
       setFormRole(user.role);
       setFormActive(user.active);
-      setFormPermissions(user.permissions || DEFAULT_PERMISSIONS);
+      setFormPermissions(sanitizePermissions(user.permissions));
+      setFormUsername(user.username || '');
+      setFormPassword(user.password || '');
     } else {
       setEditingUser(null);
       setFormEmail('');
@@ -174,6 +313,8 @@ export const UserManagement: React.FC = () => {
       setFormRole('user');
       setFormActive(true);
       setFormPermissions(DEFAULT_PERMISSIONS);
+      setFormUsername('');
+      setFormPassword('');
     }
     setIsModalOpen(true);
   };
@@ -181,6 +322,10 @@ export const UserManagement: React.FC = () => {
   const handleSelectProfile = (profile: DetectedProfile) => {
     setFormEmail(profile.email);
     setFormUid(profile.uid);
+    // Suggest default username based on email prefix
+    const emailPrefix = profile.email.split('@')[0];
+    setFormUsername(emailPrefix);
+    setFormPassword('');
     setEditingUser(null);
     setIsModalOpen(true);
   };
@@ -190,11 +335,13 @@ export const UserManagement: React.FC = () => {
     if (!isSuperAdmin) return;
 
     try {
-      const userData = {
+      const userData: any = {
         email: formEmail.toLowerCase().trim(),
         role: formRole,
         active: formActive,
         permissions: formPermissions,
+        username: formUsername.trim().toLowerCase(),
+        password: formPassword.trim(),
       };
 
       if (editingUser) {
@@ -218,12 +365,15 @@ export const UserManagement: React.FC = () => {
     }
   };
 
-  const handleDeleteUser = async (userId: string) => {
-    if (!isSuperAdmin) return;
-    if (!confirm('¿Está seguro de eliminar este usuario?')) return;
+  const handleDeleteUserClick = (user: AppUser) => {
+    setDeleteConfirmationUser(user);
+  };
 
+  const confirmDeleteUser = async () => {
+    if (!deleteConfirmationUser || !isSuperAdmin) return;
     try {
-      await deleteDoc(doc(db, 'users', userId));
+      await deleteDoc(doc(db, 'users', deleteConfirmationUser.id));
+      setDeleteConfirmationUser(null);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'users');
     }
@@ -246,17 +396,66 @@ export const UserManagement: React.FC = () => {
   if (!isSuperAdmin && !loading) {
     return (
       <div className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-6">
-        <div className="bg-white p-12 rounded-[2.5rem] shadow-xl border border-zinc-200 text-center max-w-md">
-          <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 text-red-600">
+        <div className="bg-white p-10 md:p-12 rounded-[2.5rem] shadow-xl border border-zinc-200 text-center max-w-md w-full space-y-6">
+          <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-red-600 shadow-sm">
             <Lock size={40} />
           </div>
-          <h1 className="text-2xl font-bold text-zinc-900 mb-4">Acceso Denegado</h1>
-          <p className="text-zinc-500 mb-8">
-            Solo el administrador principal tiene acceso a este panel de gestión de usuarios.
-          </p>
+          <div>
+            <h1 className="text-2xl font-bold text-zinc-900 mb-2">Acceso Restringido</h1>
+            <p className="text-zinc-500 text-sm leading-relaxed">
+              Inicie sesión con una cuenta de administrador para gestionar los usuarios del sistema.
+            </p>
+          </div>
+
+          <form onSubmit={handleReauthLogin} className="space-y-4 text-left">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Usuario Administrador</label>
+              <input
+                type="text"
+                required
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-950 outline-none transition-all placeholder-zinc-300"
+                placeholder="Ingrese el usuario..."
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Contraseña</label>
+              <input
+                type="password"
+                required
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-950 outline-none transition-all placeholder-zinc-300"
+                placeholder="••••••••"
+              />
+            </div>
+
+            {loginError && (
+              <div className="text-sm bg-rose-50 text-rose-600 p-3 rounded-xl border border-rose-100 font-medium text-center">
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full flex items-center justify-center gap-2 bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg active:scale-[0.98] disabled:bg-zinc-400 cursor-pointer text-center"
+            >
+              {isLoggingIn ? (
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+              ) : (
+                <>
+                  <Unlock size={18} />
+                  Desbloquear
+                </>
+              )}
+            </button>
+          </form>
+
           <button 
             onClick={() => navigate('/')}
-            className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-bold hover:bg-zinc-800 transition-all"
+            className="w-full text-zinc-500 hover:text-zinc-950 font-bold py-2 transition-colors text-sm"
           >
             Volver al Inicio
           </button>
@@ -387,7 +586,7 @@ export const UserManagement: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
-                        {user.permissions?.hemoderivados?.consultar && (
+                        {(user.permissions?.recepcion?.consultar || user.permissions?.preTransfusional?.consultar || user.permissions?.uso?.consultar || user.permissions?.disposicion?.consultar) && (
                           <div className="w-6 h-6 rounded-lg bg-red-50 text-red-600 flex items-center justify-center" title="Hemoderivados">
                             <Droplets size={14} />
                           </div>
@@ -413,7 +612,7 @@ export const UserManagement: React.FC = () => {
                           <Edit2 size={18} />
                         </button>
                         <button
-                          onClick={() => handleDeleteUser(user.id)}
+                          onClick={() => handleDeleteUserClick(user)}
                           className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
                         >
                           <Trash2 size={18} />
@@ -503,6 +702,7 @@ export const UserManagement: React.FC = () => {
                       <option value="admin">Administrador de Sección</option>
                     </select>
                   </div>
+
                   <div className="space-y-2">
                     <label className="block text-sm font-bold text-zinc-700">Estado de Cuenta</label>
                     <div className="flex items-center gap-4 h-[52px]">
@@ -520,6 +720,40 @@ export const UserManagement: React.FC = () => {
                       </button>
                     </div>
                   </div>
+
+                  <div className="space-y-2 col-span-1">
+                    <label className="block text-sm font-bold text-zinc-700">
+                      Usuario de Acceso Manual <span className="text-xs font-bold text-red-500">(Requerido)</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formUsername}
+                      onChange={(e) => setFormUsername(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all placeholder-zinc-300 text-sm"
+                      placeholder="Ej. lvaleriano, recepcionhemo..."
+                    />
+                    <p className="text-[10px] text-zinc-400 mt-1 leading-normal">
+                      Nombre único para ingresar digitando este usuario y su contraseña de forma manual.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 col-span-1">
+                    <label className="block text-sm font-bold text-zinc-700">
+                      Contraseña de Acceso Manual <span className="text-xs font-bold text-red-500">(Requerido)</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formPassword}
+                      onChange={(e) => setFormPassword(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all placeholder-zinc-300 text-sm font-mono"
+                      placeholder="Ingrese la contraseña"
+                    />
+                    <p className="text-[10px] text-zinc-400 mt-1 leading-normal">
+                      Defina la credencial para el inicio de sesión y el desbloqueo del panel.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="space-y-6">
@@ -528,29 +762,100 @@ export const UserManagement: React.FC = () => {
                     Configuración de Permisos
                   </h3>
 
-                  {/* Hemoderivados */}
-                  <div className="bg-red-50/30 rounded-2xl p-6 border border-red-100">
-                    <div className="flex items-center gap-3 mb-4">
+                  {/* Hemocomponentes */}
+                  <div className="bg-red-50/20 rounded-3xl p-6 border border-red-100 space-y-6">
+                    <div className="flex items-center gap-3 border-b border-red-100/60 pb-3">
                       <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center">
                         <Droplets size={20} />
                       </div>
-                      <h4 className="font-bold text-red-900">Hemocomponentes</h4>
+                      <div>
+                        <h4 className="font-bold text-red-950">Gestión de Hemocomponentes</h4>
+                        <p className="text-xs text-red-700">Especifique los permisos individuales por cada tarjeta/módulo</p>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {Object.keys(formPermissions.hemoderivados).map((action) => (
-                        <button
-                          key={action}
-                          type="button"
-                          onClick={() => togglePermission('hemoderivados', action)}
-                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
-                            (formPermissions.hemoderivados as any)[action]
-                            ? 'bg-red-600 text-white border-red-600'
-                            : 'bg-white text-zinc-500 border-zinc-200 hover:border-red-300'
-                          }`}
-                        >
-                          {action.charAt(0).toUpperCase() + action.slice(1)}
-                        </button>
-                      ))}
+
+                    {/* Sub-módulo: Recepción */}
+                    <div className="space-y-3">
+                      <h5 className="text-sm font-bold text-red-950">1. Recepción de Hemoderivados</h5>
+                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                        {Object.keys(formPermissions.recepcion).map((action) => (
+                          <button
+                            key={action}
+                            type="button"
+                            onClick={() => togglePermission('recepcion', action)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                              (formPermissions.recepcion as any)[action]
+                              ? 'bg-red-600 text-white border-red-600'
+                              : 'bg-white text-zinc-500 border-zinc-200 hover:border-red-300'
+                            }`}
+                          >
+                            {action.charAt(0).toUpperCase() + action.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Sub-módulo: Pre-Transfusional */}
+                    <div className="space-y-3">
+                      <h5 className="text-sm font-bold text-red-950">2. Pruebas Pre-Transfusionales</h5>
+                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                        {Object.keys(formPermissions.preTransfusional).map((action) => (
+                          <button
+                            key={action}
+                            type="button"
+                            onClick={() => togglePermission('preTransfusional', action)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                              (formPermissions.preTransfusional as any)[action]
+                              ? 'bg-red-600 text-white border-red-600'
+                              : 'bg-white text-zinc-500 border-zinc-200 hover:border-red-300'
+                            }`}
+                          >
+                            {action.charAt(0).toUpperCase() + action.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Sub-módulo: Uso */}
+                    <div className="space-y-3">
+                      <h5 className="text-sm font-bold text-red-950">3. Registro de Uso (Transfusión)</h5>
+                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                        {Object.keys(formPermissions.uso).map((action) => (
+                          <button
+                            key={action}
+                            type="button"
+                            onClick={() => togglePermission('uso', action)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                              (formPermissions.uso as any)[action]
+                              ? 'bg-red-600 text-white border-red-600'
+                              : 'bg-white text-zinc-500 border-zinc-200 hover:border-red-300'
+                            }`}
+                          >
+                            {action.charAt(0).toUpperCase() + action.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Sub-módulo: Disposición Final */}
+                    <div className="space-y-3">
+                      <h5 className="text-sm font-bold text-red-950">4. Disposición Final</h5>
+                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                        {Object.keys(formPermissions.disposicion).map((action) => (
+                          <button
+                            key={action}
+                            type="button"
+                            onClick={() => togglePermission('disposicion', action)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                              (formPermissions.disposicion as any)[action]
+                              ? 'bg-red-600 text-white border-red-600'
+                              : 'bg-white text-zinc-500 border-zinc-200 hover:border-red-300'
+                            }`}
+                          >
+                            {action.charAt(0).toUpperCase() + action.slice(1)}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
@@ -624,6 +929,52 @@ export const UserManagement: React.FC = () => {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Custom Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirmationUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeleteConfirmationUser(null)}
+              className="absolute inset-0 bg-zinc-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl p-8 space-y-6 text-center"
+            >
+              <div className="bg-rose-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-rose-600 shadow-sm">
+                <Trash2 size={40} />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-2xl font-bold text-zinc-900">¿Eliminar Usuario?</h3>
+                <p className="text-zinc-500 text-sm leading-relaxed">
+                  ¿Está seguro de que desea eliminar al usuario <span className="font-semibold text-zinc-800">{deleteConfirmationUser.email}</span>? 
+                  Esta acción desactivará su acceso de forma inmediata.
+                </p>
+              </div>
+              <div className="flex gap-4 pt-2">
+                <button
+                  onClick={() => setDeleteConfirmationUser(null)}
+                  className="flex-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-600 py-4 rounded-xl font-bold transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmDeleteUser}
+                  className="flex-1 bg-rose-600 hover:bg-rose-700 text-white py-4 rounded-xl font-bold transition-all shadow-lg shadow-rose-100"
+                >
+                  Eliminar
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

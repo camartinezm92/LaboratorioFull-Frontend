@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -147,7 +146,7 @@ export const Kardex: React.FC = () => {
 
   const [movement, setMovement] = useState({
     quantity: 0,
-    responsible: auth.currentUser?.email || '',
+    responsible: auth.currentUser?.uid || auth.currentUser?.email || '',
     observations: '',
     batch: '',
     expirationDate: '',
@@ -155,8 +154,8 @@ export const Kardex: React.FC = () => {
   });
 
   useEffect(() => {
-    if (auth.currentUser?.email) {
-      setMovement(prev => ({ ...prev, responsible: auth.currentUser?.email || '' }));
+    if (auth.currentUser) {
+      setMovement(prev => ({ ...prev, responsible: auth.currentUser?.uid || auth.currentUser?.email || '' }));
     }
   }, [auth.currentUser]);
 
@@ -366,7 +365,7 @@ export const Kardex: React.FC = () => {
         currentStock: 0,
         userEmail: auth.currentUser?.email,
         uid: auth.currentUser?.uid,
-        createdAt: serverTimestamp()
+        createdAt: getNowISO()
       });
       setIsAddingSupply(false);
       setNewSupply({ name: '', description: '', category: 'Insumo', unit: 'Unidad', minStock: 0 });
@@ -605,7 +604,7 @@ export const Kardex: React.FC = () => {
   };
 
   const isAdmin = () => {
-    return auth.currentUser?.email?.toLowerCase() === 'ingbiomedico@ucihonda.com.co';
+    return auth.currentUser?.uid === 'admin' || auth.currentUser?.email?.toLowerCase() === 'ingbiomedico@ucihonda.com.co';
   };
 
   const handleDeleteSupply = async () => {
@@ -1210,10 +1209,10 @@ export const Kardex: React.FC = () => {
                         filteredHistory.map(entry => (
                           <tr key={entry.id} className="border-b border-zinc-50 hover:bg-zinc-50/50 transition-colors">
                             <td className="px-6 py-4 text-zinc-600 font-medium">
-                              {entry.date?.toDate ? entry.date.toDate().toLocaleString() : 'Pendiente...'}
+                              {formatColombia(entry.date) || 'Pendiente...'}
                             </td>
                             <td className="px-6 py-4 text-zinc-400 text-xs">
-                              {entry.createdAt?.toDate ? entry.createdAt.toDate().toLocaleString() : 'Pendiente...'}
+                              {formatColombia(entry.createdAt) || 'Pendiente...'}
                             </td>
                             <td className="px-6 py-4">
                               <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${

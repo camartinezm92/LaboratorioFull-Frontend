@@ -4,7 +4,7 @@ import { BloodTestForm } from '../components/BloodTestForm';
 import { generateInterpretation } from '../utils/bloodTestUtils';
 import { RecordCard } from '../components/RecordCard';
 import { BloodTestRecord } from '../types';
-import { Droplets, History, Plus, Search, LogIn, LogOut, User as UserIcon, ShieldCheck, X, FileText, Calendar, UserCheck, Activity, AlertTriangle, ArrowLeft, CheckCircle, RotateCcw, Edit2, LayoutGrid, Users } from 'lucide-react';
+import { Droplets, History, Plus, Search, LogIn, LogOut, User as UserIcon, ShieldCheck, X, FileText, Calendar, UserCheck, Activity, AlertTriangle, ArrowLeft, CheckCircle, RotateCcw, Edit2, LayoutGrid, Users, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db, loginWithGoogle, logout, handleFirestoreError, OperationType } from '../../../firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
@@ -50,6 +50,21 @@ export const PreTransfusionalApp: React.FC = () => {
 
   const [isSystemUnlocked, setIsSystemUnlocked] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userPermissions, setUserPermissions] = useState<{
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
+    aceptar: boolean;
+    devolver: boolean;
+  } >({
+    crear: true,
+    consultar: true,
+    editar: true,
+    eliminar: true,
+    aceptar: true,
+    devolver: true
+  });
   const [isSyncing, setIsSyncing] = useState(false);
 
   const [username, setUsername] = useState('');
@@ -58,32 +73,131 @@ export const PreTransfusionalApp: React.FC = () => {
 
   useEffect(() => {
     document.title = 'Pre-transfusional - Hemocomponentes';
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      setIsAuthReady(true);
       if (!currentUser) {
         setIsSystemUnlocked(false);
+        setIsAdmin(false);
+        setIsAuthReady(true);
+      } else {
+        // Auto-unlock system if current user is active and registered in the database
+        try {
+          const isSuper = currentUser.uid === 'admin' || currentUser.email?.toLowerCase() === 'ingbiomedico@ucihonda.com.co';
+          if (isSuper) {
+            setIsAdmin(true);
+            setIsSystemUnlocked(true);
+            setUserPermissions({
+              crear: true,
+              consultar: true,
+              editar: true,
+              eliminar: true,
+              aceptar: true,
+              devolver: true
+            });
+            setIsAuthReady(true);
+            return;
+          }
+
+          const { getDoc, doc } = await import('firebase/firestore');
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            if (data.active) {
+              setIsSystemUnlocked(true);
+              setIsAdmin(data.role === 'admin');
+
+              // Fallbacks for older individual permissions
+              const p = data.permissions || {};
+              const hemoPerms = p.hemoderivados || {};
+              const preTransPerms = p.preTransfusional || {};
+
+              setUserPermissions({
+                crear: hemoPerms.crear !== undefined ? hemoPerms.crear : (preTransPerms.crear !== undefined ? preTransPerms.crear : true),
+                consultar: hemoPerms.consultar !== undefined ? hemoPerms.consultar : (preTransPerms.consultar !== undefined ? preTransPerms.consultar : true),
+                editar: hemoPerms.editar !== undefined ? hemoPerms.editar : (preTransPerms.editar !== undefined ? preTransPerms.editar : true),
+                eliminar: hemoPerms.eliminar !== undefined ? hemoPerms.eliminar : (preTransPerms.eliminar !== undefined ? preTransPerms.eliminar : true),
+                aceptar: hemoPerms.aceptar !== undefined ? hemoPerms.aceptar : (preTransPerms.aceptar !== undefined ? preTransPerms.aceptar : true),
+                devolver: hemoPerms.devolver !== undefined ? hemoPerms.devolver : (preTransPerms.devolver !== undefined ? preTransPerms.devolver : true)
+              });
+            } else {
+              setIsSystemUnlocked(false);
+            }
+          } else if (currentUser.email?.toLowerCase().endsWith('@ucihonda.com.co')) {
+            setIsSystemUnlocked(true);
+            setUserPermissions({
+              crear: true,
+              consultar: true,
+              editar: true,
+              eliminar: true,
+              aceptar: true,
+              devolver: true
+            });
+          } else {
+            setIsSystemUnlocked(false);
+          }
+        } catch (error) {
+          console.error('Error pre-loading permissions:', error);
+          setIsSystemUnlocked(false);
+        } finally {
+          setIsAuthReady(true);
+        }
       }
     });
     return () => unsubscribe();
   }, []);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     const normalizedUsername = username.trim().toLowerCase();
+    const isSuperAdminEmail = user?.email?.toLowerCase() === 'ingbiomedico@ucihonda.com.co';
+
     if (
       (normalizedUsername === 'lvaleriano' && password === 'LAB2026*') ||
       (normalizedUsername === 'admin' && password === 'admin') ||
-      (user?.email === 'ingbiomedico@ucihonda.com.co')
+      isSuperAdminEmail
     ) {
       setIsSystemUnlocked(true);
-      if (normalizedUsername === 'admin' || user?.email === 'ingbiomedico@ucihonda.com.co') {
+      if (normalizedUsername === 'admin' || isSuperAdminEmail) {
         setIsAdmin(true);
       }
-    } else {
-      setLoginError('Usuario o contraseña incorrectos.');
+      return;
     }
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.user && data.user.active) {
+          setIsSystemUnlocked(true);
+          const rootRole = data.user.role === 'admin';
+          setIsAdmin(rootRole);
+
+          const p = data.user.permissions || {};
+          const hemoPerms = p.hemoderivados || {};
+          const preTransPerms = p.preTransfusional || {};
+
+          setUserPermissions({
+            crear: hemoPerms.crear !== undefined ? hemoPerms.crear : (preTransPerms.crear !== undefined ? preTransPerms.crear : true),
+            consultar: hemoPerms.consultar !== undefined ? hemoPerms.consultar : (preTransPerms.consultar !== undefined ? preTransPerms.consultar : true),
+            editar: hemoPerms.editar !== undefined ? hemoPerms.editar : (preTransPerms.editar !== undefined ? preTransPerms.editar : true),
+            eliminar: hemoPerms.eliminar !== undefined ? hemoPerms.eliminar : (preTransPerms.eliminar !== undefined ? preTransPerms.eliminar : true),
+            aceptar: hemoPerms.aceptar !== undefined ? hemoPerms.aceptar : (preTransPerms.aceptar !== undefined ? preTransPerms.aceptar : true),
+            devolver: hemoPerms.devolver !== undefined ? hemoPerms.devolver : (preTransPerms.devolver !== undefined ? preTransPerms.devolver : true)
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error("Error on dynamic login in PreTransfusionalApp:", err);
+    }
+
+    setLoginError('Usuario o contraseña incorrectos.');
   };
 
   const handleLogout = async () => {
@@ -126,7 +240,9 @@ export const PreTransfusionalApp: React.FC = () => {
       }
     };
 
-    cleanupOldRecords();
+    if (isAdmin || userPermissions.eliminar) {
+      cleanupOldRecords();
+    }
 
     const q = query(collection(db, path), orderBy('createdAt', 'desc'));
     
@@ -407,17 +523,19 @@ export const PreTransfusionalApp: React.FC = () => {
           <div className="flex items-center gap-4">
             {user && isSystemUnlocked ? (
               <>
-                <button
-                  onClick={showForm ? () => setShowForm(false) : handleNewRecord}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all ${
-                    showForm 
-                    ? 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200' 
-                    : 'bg-red-600 text-white hover:bg-red-700 shadow-md shadow-red-100'
-                  }`}
-                >
-                  {showForm ? <History size={18} /> : <Plus size={18} />}
-                  {showForm ? 'Ver Historial' : 'Nuevo Registro'}
-                </button>
+                {(isAdmin || userPermissions.crear || showForm) && (
+                  <button
+                    onClick={showForm ? () => setShowForm(false) : handleNewRecord}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all ${
+                      showForm 
+                      ? 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200' 
+                      : 'bg-red-600 text-white hover:bg-red-700 shadow-md shadow-red-100'
+                    }`}
+                  >
+                    {showForm ? <History size={18} /> : <Plus size={18} />}
+                    {showForm ? 'Ver Historial' : 'Nuevo Registro'}
+                  </button>
+                )}
                 <button
                   onClick={handleLogout}
                   className="p-2 text-zinc-400 hover:text-red-600 transition-colors"
@@ -450,73 +568,43 @@ export const PreTransfusionalApp: React.FC = () => {
       <main className="max-w-[1600px] mx-auto px-6 py-8">
         {!user ? (
           <div className="max-w-md mx-auto mt-20 text-center space-y-6">
-            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto">
-              <ShieldCheck className="text-red-600" size={40} />
+            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-red-600 shadow-sm">
+              <Lock size={40} />
             </div>
-            <h2 className="text-3xl font-bold text-zinc-900">Paso 1: Autenticación</h2>
-            <p className="text-zinc-500">
-              Por favor, asocia tu cuenta de correo institucional para gestionar los registros (crear, editar, eliminar).
+            <h2 className="text-3xl font-bold text-zinc-900">Acceso Restringido</h2>
+            <p className="text-zinc-500 leading-relaxed">
+              No ha iniciado sesión en el sistema. Por favor ingrese desde la pantalla principal para continuar.
             </p>
             <button
-              onClick={loginWithGoogle}
-              className="w-full bg-red-600 text-white py-4 rounded-2xl font-bold text-lg shadow-xl shadow-red-100 hover:bg-red-700 transition-all active:scale-95 flex items-center justify-center gap-3"
+              onClick={() => navigate('/')}
+              className="w-full bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-[0.98] flex items-center justify-center gap-3 shadow-lg"
             >
-              <LogIn size={24} />
-              Continuar con Google
+              Ir a la Pantalla Principal
             </button>
           </div>
         ) : !isSystemUnlocked ? (
           <div className="max-w-md mx-auto mt-20 text-center space-y-6">
-            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto">
-              <ShieldCheck className="text-red-600" size={40} />
+            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-red-600 shadow-sm">
+              <Lock size={40} />
             </div>
-            <h2 className="text-3xl font-bold text-zinc-900">Paso 2: Acceso Restringido</h2>
-            <p className="text-zinc-500">
-              Por favor, ingresa tus credenciales de sistema para acceder a la gestión de hemoderivados.
+            <h2 className="text-3xl font-bold text-zinc-900">Acceso No Autorizado</h2>
+            <p className="text-zinc-500 leading-relaxed">
+              Su usuario no tiene los permisos requeridos para gestionar el módulo Pre-transfusional. Por favor, contacte a un administrador para activarlos.
             </p>
-            
-            <form onSubmit={handleLogin} className="space-y-4 text-left">
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Usuario</label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
-                  placeholder="Ingrese su usuario"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Contraseña</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
-                  placeholder="Ingrese su contraseña"
-                  required
-                />
-              </div>
-              
-              {loginError && (
-                <div className="p-3 bg-red-50 text-red-600 rounded-xl text-sm font-medium flex items-center gap-2">
-                  <AlertTriangle size={16} />
-                  {loginError}
-                </div>
-              )}
-
+            <div className="flex gap-4">
               <button
-                type="submit"
-                className="w-full bg-red-600 text-white py-4 rounded-2xl font-bold text-lg shadow-xl shadow-red-100 hover:bg-red-700 transition-all active:scale-95 flex items-center justify-center gap-3 mt-6"
+                onClick={() => handleLogout()}
+                className="flex-1 bg-white border border-zinc-200 text-zinc-600 py-4 rounded-xl font-bold hover:bg-zinc-50 transition-all"
               >
-                <LogIn size={24} />
-                Desbloquear Sistema
+                Cerrar Sesión
               </button>
-            </form>
-            <button onClick={handleLogout} className="text-zinc-500 text-sm hover:text-red-600 transition-colors">
-              Cambiar cuenta de Google
-            </button>
+              <button
+                onClick={() => navigate('/')}
+                className="flex-1 bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-md"
+              >
+                Ir a Inicio
+              </button>
+            </div>
           </div>
         ) : (
           <AnimatePresence mode="wait">
@@ -735,12 +823,14 @@ export const PreTransfusionalApp: React.FC = () => {
                                           onView={setSelectedRecord}
                                           onDelete={deleteRecord}
                                           onEdit={handleEdit}
-                                          onAccept={setRecordToAccept}
-                                          onReturn={setRecordToReturn}
                                           currentUserUid={user?.uid}
                                           isAdmin={isAdmin}
                                           isUsed={isTransfused}
                                           isReserved={isReserved}
+                                          canEdit={isAdmin || userPermissions.editar}
+                                          canDelete={isAdmin || userPermissions.eliminar}
+                                          onAccept={ (isAdmin || userPermissions.aceptar) ? setRecordToAccept : undefined }
+                                          onReturn={ (isAdmin || userPermissions.devolver) ? setRecordToReturn : undefined }
                                         />
                                       );
                                     })}

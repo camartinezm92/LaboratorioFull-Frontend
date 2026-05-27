@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { FinalDispositionRecord, ReceivedUnitRecord } from '../types';
 import { getColombiaDateString } from '../../../utils/dateUtils';

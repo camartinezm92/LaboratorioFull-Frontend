@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Inbox, Plus, History, LogIn, LogOut, ShieldCheck, ClipboardCheck, X, AlertTriangle, Info, Layers, Droplets, LayoutGrid } from 'lucide-react';
+import { ArrowLeft, Inbox, Plus, History, LogIn, LogOut, ShieldCheck, ClipboardCheck, X, AlertTriangle, Info, Layers, Droplets, LayoutGrid, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RecepcionForm } from '../components/RecepcionForm';
 import { RecepcionRecordCard } from '../components/RecepcionRecordCard';
@@ -36,14 +35,35 @@ export const RecepcionApp: React.FC = () => {
   
   const [isSystemUnlocked, setIsSystemUnlocked] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userPermissions, setUserPermissions] = useState<{
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
+    aceptar: boolean;
+    devolver: boolean;
+  }>({
+    crear: true,
+    consultar: true,
+    editar: true,
+    eliminar: true,
+    aceptar: true,
+    devolver: true
+  });
   const [isSyncing, setIsSyncing] = useState(false);
   const [backendStatus, setBackendStatus] = useState<{ status: string; firebase: any; sheets: any } | null>(null);
 
   useEffect(() => {
     fetch('/api/health')
-      .then(res => res.json())
+      .then(res => {
+        const contentType = res.headers.get('content-type');
+        if (res.ok && contentType && contentType.includes('application/json')) {
+          return res.json();
+        }
+        throw new Error(`Server returned non-JSON response (${res.status})`);
+      })
       .then(data => setBackendStatus(data))
-      .catch(err => console.error('Error fetching health:', err));
+      .catch(err => console.warn('Backend status is not available yet:', err));
   }, []);
 
   const [username, setUsername] = useState('');
@@ -62,11 +82,74 @@ export const RecepcionApp: React.FC = () => {
 
   useEffect(() => {
     document.title = 'Recepción - Hemocomponentes';
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      setIsAuthReady(true);
       if (!currentUser) {
         setIsSystemUnlocked(false);
+        setIsAdmin(false);
+        setIsAuthReady(true);
+      } else {
+        // Auto-unlock system if current user is active and registered in the database
+        try {
+          const isSuper = currentUser.uid === 'admin' || currentUser.email?.toLowerCase() === 'ingbiomedico@ucihonda.com.co';
+          if (isSuper) {
+            setIsAdmin(true);
+            setIsSystemUnlocked(true);
+            setUserPermissions({
+              crear: true,
+              consultar: true,
+              editar: true,
+              eliminar: true,
+              aceptar: true,
+              devolver: true
+            });
+            setIsAuthReady(true);
+            return;
+          }
+
+          const { getDoc, doc } = await import('firebase/firestore');
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            if (data.active) {
+              setIsSystemUnlocked(true);
+              setIsAdmin(data.role === 'admin');
+
+              // Modular fallbacks for old vs. new permissions format
+              const p = data.permissions || {};
+              const hemoPerms = p.hemoderivados || {};
+              const recepPerms = p.recepcion || {};
+
+              setUserPermissions({
+                crear: hemoPerms.crear !== undefined ? hemoPerms.crear : (recepPerms.crear !== undefined ? recepPerms.crear : true),
+                consultar: hemoPerms.consultar !== undefined ? hemoPerms.consultar : (recepPerms.consultar !== undefined ? recepPerms.consultar : true),
+                editar: hemoPerms.editar !== undefined ? hemoPerms.editar : (recepPerms.editar !== undefined ? recepPerms.editar : true),
+                eliminar: hemoPerms.eliminar !== undefined ? hemoPerms.eliminar : (recepPerms.eliminar !== undefined ? recepPerms.eliminar : true),
+                aceptar: hemoPerms.aceptar !== undefined ? hemoPerms.aceptar : (recepPerms.aceptar !== undefined ? recepPerms.aceptar : true),
+                devolver: hemoPerms.devolver !== undefined ? hemoPerms.devolver : (recepPerms.devolver !== undefined ? recepPerms.devolver : true)
+              });
+            } else {
+              setIsSystemUnlocked(false);
+            }
+          } else if (currentUser.email?.toLowerCase().endsWith('@ucihonda.com.co')) {
+            setIsSystemUnlocked(true);
+            setUserPermissions({
+              crear: true,
+              consultar: true,
+              editar: true,
+              eliminar: true,
+              aceptar: true,
+              devolver: true
+            });
+          } else {
+            setIsSystemUnlocked(false);
+          }
+        } catch (error) {
+          console.error('Error pre-loading permissions:', error);
+          setIsSystemUnlocked(false);
+        } finally {
+          setIsAuthReady(true);
+        }
       }
     });
     return () => unsubscribe();
@@ -104,7 +187,9 @@ export const RecepcionApp: React.FC = () => {
       }
     };
 
-    cleanupOldRecords();
+    if (isAdmin || userPermissions.eliminar) {
+      cleanupOldRecords();
+    }
 
     const q = query(collection(db, path), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -159,7 +244,7 @@ export const RecepcionApp: React.FC = () => {
     };
   }, [isAuthReady, user, isSystemUnlocked]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     const normalizedUsername = username.trim().toLowerCase();
@@ -175,9 +260,43 @@ export const RecepcionApp: React.FC = () => {
       if (normalizedUsername === 'admin' || isSuperAdminEmail) {
         setIsAdmin(true);
       }
-    } else {
-      setLoginError('Usuario o contraseña incorrectos.');
+      return;
     }
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.user && data.user.active) {
+          setIsSystemUnlocked(true);
+          const rootRole = data.user.role === 'admin';
+          setIsAdmin(rootRole);
+
+          const p = data.user.permissions || {};
+          const hemoPerms = p.hemoderivados || {};
+          const recepPerms = p.recepcion || {};
+
+          setUserPermissions({
+            crear: hemoPerms.crear !== undefined ? hemoPerms.crear : (recepPerms.crear !== undefined ? recepPerms.crear : true),
+            consultar: hemoPerms.consultar !== undefined ? hemoPerms.consultar : (recepPerms.consultar !== undefined ? recepPerms.consultar : true),
+            editar: hemoPerms.editar !== undefined ? hemoPerms.editar : (recepPerms.editar !== undefined ? recepPerms.editar : true),
+            eliminar: hemoPerms.eliminar !== undefined ? hemoPerms.eliminar : (recepPerms.eliminar !== undefined ? recepPerms.eliminar : true),
+            aceptar: hemoPerms.aceptar !== undefined ? hemoPerms.aceptar : (recepPerms.aceptar !== undefined ? recepPerms.aceptar : true),
+            devolver: hemoPerms.devolver !== undefined ? hemoPerms.devolver : (recepPerms.devolver !== undefined ? recepPerms.devolver : true)
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error("Error on dynamic login in RecepcionApp:", err);
+    }
+
+    setLoginError('Usuario o contraseña incorrectos.');
   };
 
   const handleSync = async () => {
@@ -403,17 +522,19 @@ export const RecepcionApp: React.FC = () => {
                   <Layers size={18} />
                   {isSyncing ? 'Sincronizando...' : 'Sincronizar'}
                 </button>
-                <button
-                  onClick={showForm ? () => setShowForm(false) : handleNewRecord}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all ${
-                    showForm 
-                    ? 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200' 
-                    : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-100'
-                  }`}
-                >
-                  {showForm ? <History size={18} /> : <Plus size={18} />}
-                  {showForm ? 'Ver Historial' : 'Nueva Recepción'}
-                </button>
+                {(isAdmin || userPermissions.crear || showForm) && (
+                  <button
+                    onClick={showForm ? () => setShowForm(false) : handleNewRecord}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all ${
+                      showForm 
+                      ? 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200' 
+                      : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-100'
+                    }`}
+                  >
+                    {showForm ? <History size={18} /> : <Plus size={18} />}
+                    {showForm ? 'Ver Historial' : 'Nueva Recepción'}
+                  </button>
+                )}
                 <button
                   onClick={handleLogout}
                   className="p-2 text-zinc-400 hover:text-red-600 transition-colors"
@@ -446,69 +567,43 @@ export const RecepcionApp: React.FC = () => {
       <main className="max-w-7xl mx-auto px-6 py-8">
         {!user ? (
           <div className="max-w-md mx-auto mt-20 text-center space-y-6">
-            <div className="bg-blue-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto">
-              <ShieldCheck className="text-blue-600" size={40} />
+            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-red-600 shadow-sm">
+              <Lock size={40} />
             </div>
-            <h2 className="text-3xl font-bold text-zinc-900">Paso 1: Autenticación</h2>
-            <p className="text-zinc-500">
-              Por favor, asocia tu cuenta de correo institucional para gestionar los registros de recepción.
+            <h2 className="text-3xl font-bold text-zinc-900">Acceso Restringido</h2>
+            <p className="text-zinc-500 leading-relaxed">
+              No ha iniciado sesión en el sistema. Por favor ingrese desde la pantalla principal para continuar.
             </p>
             <button
-              onClick={loginWithGoogle}
-              className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold text-lg shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 flex items-center justify-center gap-3"
+              onClick={() => navigate('/')}
+              className="w-full bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-[0.98] flex items-center justify-center gap-3 shadow-lg"
             >
-              <LogIn size={24} />
-              Continuar con Google
+              Ir a la Pantalla Principal
             </button>
           </div>
         ) : !isSystemUnlocked ? (
           <div className="max-w-md mx-auto mt-20 text-center space-y-6">
-            <div className="bg-blue-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto">
-              <ShieldCheck className="text-blue-600" size={40} />
+            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-red-600 shadow-sm">
+              <Lock size={40} />
             </div>
-            <h2 className="text-3xl font-bold text-zinc-900">Paso 2: Acceso al Sistema</h2>
-            <p className="text-zinc-500">
-              Ingresa las credenciales del módulo de recepción para continuar.
+            <h2 className="text-3xl font-bold text-zinc-900">Acceso No Autorizado</h2>
+            <p className="text-zinc-500 leading-relaxed">
+              Su usuario no tiene los permisos requeridos para gestionar el módulo de Recepción. Por favor, contacte a un administrador para activarlos.
             </p>
-            
-            <form onSubmit={handleLogin} className="bg-white p-8 rounded-3xl shadow-xl border border-zinc-100 space-y-6 text-left">
-              {loginError && (
-                <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium border border-red-100">
-                  {loginError}
-                </div>
-              )}
-              
-              <div>
-                <label className="block text-sm font-bold text-zinc-700 mb-2">Usuario</label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                  placeholder="Ingrese el usuario"
-                  required
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-bold text-zinc-700 mb-2">Contraseña</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                  placeholder="••••••••"
-                  required
-                />
-              </div>
-              
+            <div className="flex gap-4">
               <button
-                type="submit"
-                className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-bold text-lg shadow-xl hover:bg-zinc-800 transition-all active:scale-95"
+                onClick={() => handleLogout()}
+                className="flex-1 bg-white border border-zinc-200 text-zinc-600 py-4 rounded-xl font-bold hover:bg-zinc-50 transition-all"
               >
-                Desbloquear Sistema
+                Cerrar Sesión
               </button>
-            </form>
+              <button
+                onClick={() => navigate('/')}
+                className="flex-1 bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-md"
+              >
+                Ir a Inicio
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -692,6 +787,8 @@ export const RecepcionApp: React.FC = () => {
                             onReclassify={handleReclassifyClick}
                             currentUserUid={user?.uid}
                             isAdmin={isAdmin}
+                            canEdit={isAdmin || userPermissions.editar}
+                            canDelete={isAdmin || userPermissions.eliminar}
                           />
                         );
                       })}

@@ -4,13 +4,33 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 
 export interface UserPermissions {
-  hemoderivados: {
+  recepcion: {
     crear: boolean;
     consultar: boolean;
     editar: boolean;
     eliminar: boolean;
     aceptar: boolean;
     devolver: boolean;
+  };
+  preTransfusional: {
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
+    aceptar: boolean;
+    devolver: boolean;
+  };
+  uso: {
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
+  };
+  disposicion: {
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
   };
   laboratorio: {
     crear: boolean;
@@ -44,10 +64,13 @@ export const usePermissions = () => {
       if (user) {
         const userEmail = user.email?.toLowerCase();
         
-        if (userEmail === SUPER_ADMIN_EMAIL) {
+        if (user.uid === 'admin' || userEmail === SUPER_ADMIN_EMAIL) {
           setIsAdmin(true);
           setPermissions({
-            hemoderivados: { crear: true, consultar: true, editar: true, eliminar: true, aceptar: true, devolver: true },
+            recepcion: { crear: true, consultar: true, editar: true, eliminar: true, aceptar: true, devolver: true },
+            preTransfusional: { crear: true, consultar: true, editar: true, eliminar: true, aceptar: true, devolver: true },
+            uso: { crear: true, consultar: true, editar: true, eliminar: true },
+            disposicion: { crear: true, consultar: true, editar: true, eliminar: true },
             laboratorio: { crear: true, consultar: true },
             insumos: { crear: true, consultar: true, consumir: true, eliminar: true }
           });

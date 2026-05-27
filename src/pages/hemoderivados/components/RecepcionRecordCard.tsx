@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { ReceivedUnitRecord } from '../types';
 import { Package, Calendar, Droplets, CheckCircle, XCircle, Trash2, User, Eye, X, Thermometer, Info, ClipboardCheck, UserCheck, Edit2, AlertTriangle } from 'lucide-react';
@@ -13,13 +12,26 @@ interface RecepcionRecordCardProps {
   onReclassify?: (record: ReceivedUnitRecord) => void;
   currentUserUid?: string;
   isAdmin?: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-export const RecepcionRecordCard: React.FC<RecepcionRecordCardProps> = ({ record, isUsed, isReserved, onDelete, onEdit, onReclassify, currentUserUid, isAdmin }) => {
+export const RecepcionRecordCard: React.FC<RecepcionRecordCardProps> = ({ 
+  record, 
+  isUsed, 
+  isReserved, 
+  onDelete, 
+  onEdit, 
+  onReclassify, 
+  currentUserUid, 
+  isAdmin,
+  canEdit: customCanEdit,
+  canDelete: customCanDelete
+}) => {
   const [showDetails, setShowDetails] = useState(false);
   const isOwner = currentUserUid === record.uid;
-  const canDelete = isAdmin;
-  const canEdit = isAdmin;
+  const canDelete = customCanDelete !== undefined ? customCanDelete : isAdmin;
+  const canEdit = customCanEdit !== undefined ? customCanEdit : isAdmin;
 
   return (
     <div className={`rounded-3xl p-6 shadow-sm border border-zinc-100 hover:shadow-md transition-shadow relative ${

@@ -1,4 +1,3 @@
-
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
@@ -737,6 +736,114 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Usuario y contraseña son requeridos' });
+    }
+
+    const trimmedUsername = username.trim();
+    if (!db) {
+      return res.status(500).json({ error: 'La base de datos de Firebase no está sincronizada o inicializada' });
+    }
+
+    // Fetch user doc by exact ID first
+    let userDocRef = db.collection('users').doc(trimmedUsername);
+    let userDocSnap = await userDocRef.get();
+    let userData = userDocSnap.exists ? userDocSnap.data() : null;
+    let finalUsername = trimmedUsername;
+
+    if (!userDocSnap.exists) {
+      // Find case-insensitively by checking doc.id or username field
+      const querySnapshot = await db.collection('users').get();
+      const matchingDoc = querySnapshot.docs.find(doc => {
+        const docId = doc.id.trim().toLowerCase();
+        const uName = (doc.data().username || '').trim().toLowerCase();
+        return docId === trimmedUsername.toLowerCase() || uName === trimmedUsername.toLowerCase();
+      });
+
+      if (matchingDoc) {
+        userDocSnap = matchingDoc;
+        userData = matchingDoc.data();
+        finalUsername = matchingDoc.id;
+      } else {
+        return res.status(401).json({ error: 'Usuario no encontrado' });
+      }
+    }
+
+    if (!userData) {
+      return res.status(500).json({ error: 'Error al consultar los datos del usuario' });
+    }
+
+    if (!userData.active) {
+      return res.status(403).json({ error: 'El usuario se encuentra inactivo. Comuníquese con soporte de tecnología.' });
+    }
+
+    // Verify password matching (trimmed to prevent spaces issues)
+    const storedPassword = (userData.password || '').trim();
+    const inputPassword = password.trim();
+    if (storedPassword !== inputPassword) {
+      return res.status(401).json({ error: 'Contraseña incorrecta' });
+    }
+
+    // Generate a unique clean email for this user in Firebase Auth
+    const emailInAuth = `${finalUsername.toLowerCase()}@ucihonda.com.co`;
+
+    console.log(`Syncing Firebase Auth user account for: ${finalUsername} (${emailInAuth})...`);
+    let firebaseSyncSuccess = true;
+    let firebaseSyncErrorMessage = '';
+    try {
+      try {
+        await admin.auth().getUser(finalUsername);
+        await admin.auth().updateUser(finalUsername, {
+          email: emailInAuth,
+          password: inputPassword,
+          displayName: finalUsername,
+          disabled: false
+        });
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/user-not-found') {
+          console.log(`User ${finalUsername} does not exist in Auth. Creating account...`);
+          await admin.auth().createUser({
+            uid: finalUsername,
+            email: emailInAuth,
+            password: inputPassword,
+            displayName: finalUsername,
+            disabled: false
+          });
+        } else {
+          console.error('Error updating Firebase Auth credentials during synchronization:', authErr);
+          throw authErr;
+        }
+      }
+    } catch (syncErr: any) {
+      console.warn(`[WARNING] Firebase Auth sync failed (likely Identity Toolkit API is disabled on project). Continuing login anyway:`, syncErr.message);
+      firebaseSyncSuccess = false;
+      firebaseSyncErrorMessage = syncErr.message || '';
+    }
+
+    return res.json({
+      success: true,
+      firebaseEmail: emailInAuth,
+      firebaseSyncSuccess,
+      firebaseSyncErrorMessage,
+      user: {
+        id: finalUsername,
+        username: finalUsername,
+        email: userData.email,
+        role: userData.role,
+        active: userData.active,
+        permissions: userData.permissions
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Error authenticating user via Express endpoint:', error);
+    return res.status(500).json({ error: error.message || 'Error técnico del servidor durante la autenticación' });
+  }
+});
+
 // Debug Firestore connection
 app.get('/api/debug/firestore', async (req, res) => {
   try {
@@ -844,6 +951,7 @@ app.post('/api/records/:collection', async (req, res) => {
   
   const record = { 
     ...recordData, 
+    userEmail: userEmail || recordData.userEmail || 'unknown',
     id: recordData.id || Math.random().toString(36).substr(2, 9), 
     createdAt: recordData.createdAt || new Date().toISOString() 
   };

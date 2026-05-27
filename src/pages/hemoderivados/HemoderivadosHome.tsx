@@ -10,7 +10,7 @@ import { usePermissions } from '../../hooks/usePermissions';
 export const HemoderivadosHome: React.FC = () => {
   const navigate = useNavigate();
   const [isTraceabilityModalOpen, setIsTraceabilityModalOpen] = useState(false);
-  const { hasPermission, loading } = usePermissions();
+  const { permissions, isAdmin, loading } = usePermissions();
 
   useEffect(() => {
     document.title = 'Hemocomponentes';
@@ -24,7 +24,7 @@ export const HemoderivadosHome: React.FC = () => {
     );
   }
 
-  if (!hasPermission('hemoderivados', 'consultar')) {
+  if (!isAdmin && !permissions) {
     return (
       <div className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-6">
         <div className="bg-white p-12 rounded-[2.5rem] shadow-xl border border-zinc-200 text-center max-w-md">
@@ -33,7 +33,7 @@ export const HemoderivadosHome: React.FC = () => {
           </div>
           <h1 className="text-2xl font-bold text-zinc-900 mb-4">Acceso Restringido</h1>
           <p className="text-zinc-500 mb-8">
-            No tiene permisos para consultar la sección de Hemocomponentes. Contacte al administrador para solicitar acceso.
+            No tiene permisos activos para acceder al sistema. Por favor, inicie sesión o contacte con el administrador.
           </p>
           <button 
             onClick={() => navigate('/')}

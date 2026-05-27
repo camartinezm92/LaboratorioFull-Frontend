@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Activity, History, LogIn, LogOut, ShieldCheck, Trash2, Plus, Search, LayoutGrid, Users, User as UserIcon, Edit2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Activity, History, LogIn, LogOut, ShieldCheck, Trash2, Plus, Search, LayoutGrid, Users, User as UserIcon, Edit2, AlertTriangle, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { UsoForm } from '../components/UsoForm';
 import { UsoRecordCard } from '../components/UsoRecordCard';
@@ -31,6 +31,17 @@ export const UsoApp: React.FC = () => {
   
   const [isSystemUnlocked, setIsSystemUnlocked] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userPermissions, setUserPermissions] = useState<{
+    crear: boolean;
+    consultar: boolean;
+    editar: boolean;
+    eliminar: boolean;
+  }>({
+    crear: true,
+    consultar: true,
+    editar: true,
+    eliminar: true
+  });
   const [isSyncing, setIsSyncing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
@@ -44,10 +55,69 @@ export const UsoApp: React.FC = () => {
 
   useEffect(() => {
     document.title = 'Uso - Hemocomponentes';
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      setIsAuthReady(true);
-      if (!currentUser) setIsSystemUnlocked(false);
+      if (!currentUser) {
+        setIsSystemUnlocked(false);
+        setIsAdmin(false);
+        setIsAuthReady(true);
+      } else {
+        // Auto-unlock system if current user is active and registered in the database
+        try {
+          const isSuper = currentUser.uid === 'admin' || currentUser.email?.toLowerCase() === 'ingbiomedico@ucihonda.com.co';
+          if (isSuper) {
+            setIsAdmin(true);
+            setIsSystemUnlocked(true);
+            setUserPermissions({
+              crear: true,
+              consultar: true,
+              editar: true,
+              eliminar: true
+            });
+            setIsAuthReady(true);
+            return;
+          }
+
+          const { getDoc, doc } = await import('firebase/firestore');
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            if (data.active) {
+              setIsSystemUnlocked(true);
+              setIsAdmin(data.role === 'admin');
+
+              // Fallbacks for older individual permissions
+              const p = data.permissions || {};
+              const hemoPerms = p.hemoderivados || {};
+              const usoPerms = p.uso || {};
+
+              setUserPermissions({
+                crear: hemoPerms.crear !== undefined ? hemoPerms.crear : (usoPerms.crear !== undefined ? usoPerms.crear : true),
+                consultar: hemoPerms.consultar !== undefined ? hemoPerms.consultar : (usoPerms.consultar !== undefined ? usoPerms.consultar : true),
+                editar: hemoPerms.editar !== undefined ? hemoPerms.editar : (usoPerms.editar !== undefined ? usoPerms.editar : true),
+                eliminar: hemoPerms.eliminar !== undefined ? hemoPerms.eliminar : (usoPerms.eliminar !== undefined ? usoPerms.eliminar : true)
+              });
+            } else {
+              setIsSystemUnlocked(false);
+            }
+          } else if (currentUser.email?.toLowerCase().endsWith('@ucihonda.com.co')) {
+            setIsSystemUnlocked(true);
+            setUserPermissions({
+              crear: true,
+              consultar: true,
+              editar: true,
+              eliminar: true
+            });
+          } else {
+            setIsSystemUnlocked(false);
+          }
+        } catch (error) {
+          console.error('Error pre-loading permissions:', error);
+          setIsSystemUnlocked(false);
+        } finally {
+          setIsAuthReady(true);
+        }
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -84,7 +154,9 @@ export const UsoApp: React.FC = () => {
       }
     };
 
-    cleanupOldRecords();
+    if (isAdmin || userPermissions.eliminar) {
+      cleanupOldRecords();
+    }
 
     const q = query(collection(db, path), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -114,22 +186,56 @@ export const UsoApp: React.FC = () => {
     };
   }, [isAuthReady, user, isSystemUnlocked]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     const normalizedUsername = username.trim().toLowerCase();
+    const isSuperAdminEmail = user?.email?.toLowerCase() === 'ingbiomedico@ucihonda.com.co';
+
     if (
       (normalizedUsername === 'usohemo' && password === 'Usohemo2026*') ||
       (normalizedUsername === 'admin' && password === 'admin') ||
-      (user?.email === 'ingbiomedico@ucihonda.com.co')
+      isSuperAdminEmail
     ) {
       setIsSystemUnlocked(true);
-      if (normalizedUsername === 'admin' || user?.email === 'ingbiomedico@ucihonda.com.co') {
+      if (normalizedUsername === 'admin' || isSuperAdminEmail) {
         setIsAdmin(true);
       }
-    } else {
-      setLoginError('Usuario o contraseña incorrectos.');
+      return;
     }
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.user && data.user.active) {
+          setIsSystemUnlocked(true);
+          const rootRole = data.user.role === 'admin';
+          setIsAdmin(rootRole);
+
+          const p = data.user.permissions || {};
+          const hemoPerms = p.hemoderivados || {};
+          const usoPerms = p.uso || {};
+
+          setUserPermissions({
+            crear: hemoPerms.crear !== undefined ? hemoPerms.crear : (usoPerms.crear !== undefined ? usoPerms.crear : true),
+            consultar: hemoPerms.consultar !== undefined ? hemoPerms.consultar : (usoPerms.consultar !== undefined ? usoPerms.consultar : true),
+            editar: hemoPerms.editar !== undefined ? hemoPerms.editar : (usoPerms.editar !== undefined ? usoPerms.editar : true),
+            eliminar: hemoPerms.eliminar !== undefined ? hemoPerms.eliminar : (usoPerms.eliminar !== undefined ? usoPerms.eliminar : true)
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error("Error on dynamic login in UsoApp:", err);
+    }
+
+    setLoginError('Usuario o contraseña incorrectos.');
   };
 
   const handleSubmit = async (formData: Omit<TransfusionUseRecord, 'id' | 'createdAt' | 'uid' | 'userEmail'>) => {
@@ -269,7 +375,7 @@ export const UsoApp: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {user && isSystemUnlocked && (
+            {user && isSystemUnlocked && (isAdmin || userPermissions.crear || showForm) && (
               <button onClick={showForm ? () => setShowForm(false) : handleNewRecord} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-medium hover:bg-emerald-700 transition-all shadow-md shadow-emerald-100">
                 {showForm ? <History size={18} /> : <Plus size={18} />}
                 {showForm ? 'Ver Historial' : 'Nuevo Registro'}
@@ -282,26 +388,43 @@ export const UsoApp: React.FC = () => {
       <main className="max-w-[1600px] mx-auto px-6 py-8">
         {!user ? (
           <div className="max-w-md mx-auto mt-20 text-center space-y-6">
-            <div className="bg-emerald-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto"><ShieldCheck className="text-emerald-600" size={40} /></div>
-            <h2 className="text-3xl font-bold text-zinc-900">Paso 1: Autenticación</h2>
-            <button onClick={loginWithGoogle} className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold text-lg shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center justify-center gap-3"><LogIn size={24} />Continuar con Google</button>
+            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-red-600 shadow-sm">
+              <Lock size={40} />
+            </div>
+            <h2 className="text-3xl font-bold text-zinc-900">Acceso Restringido</h2>
+            <p className="text-zinc-500 leading-relaxed">
+              No ha iniciado sesión en el sistema. Por favor ingrese desde la pantalla principal para continuar.
+            </p>
+            <button
+              onClick={() => navigate('/')}
+              className="w-full bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-[0.98] flex items-center justify-center gap-3 shadow-lg"
+            >
+              Ir a la Pantalla Principal
+            </button>
           </div>
         ) : !isSystemUnlocked ? (
           <div className="max-w-md mx-auto mt-20 text-center space-y-6">
-            <div className="bg-emerald-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto"><ShieldCheck className="text-emerald-600" size={40} /></div>
-            <h2 className="text-3xl font-bold text-zinc-900">Paso 2: Acceso al Sistema</h2>
-            <form onSubmit={handleLogin} className="bg-white p-8 rounded-3xl shadow-xl border border-zinc-100 space-y-6 text-left">
-              {loginError && <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium border border-red-100">{loginError}</div>}
-              <div>
-                <label className="block text-sm font-bold text-zinc-700 mb-2">Usuario</label>
-                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="usohemo" required />
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-zinc-700 mb-2">Contraseña</label>
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="••••••••" required />
-              </div>
-              <button type="submit" className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-bold text-lg shadow-xl hover:bg-zinc-800 transition-all">Desbloquear Sistema</button>
-            </form>
+            <div className="bg-red-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto text-red-600 shadow-sm">
+              <Lock size={40} />
+            </div>
+            <h2 className="text-3xl font-bold text-zinc-900">Acceso No Autorizado</h2>
+            <p className="text-zinc-500 leading-relaxed">
+              Su usuario no tiene los permisos requeridos para gestionar el módulo de Uso. Por favor, contacte a un administrador para activarlos.
+            </p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => logout()}
+                className="flex-1 bg-white border border-zinc-200 text-zinc-600 py-4 rounded-xl font-bold hover:bg-zinc-50 transition-all"
+              >
+                Cerrar Sesión
+              </button>
+              <button
+                onClick={() => navigate('/')}
+                className="flex-1 bg-zinc-900 text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-md"
+              >
+                Ir a Inicio
+              </button>
+            </div>
           </div>
         ) : (
           <AnimatePresence mode="wait">
@@ -493,6 +616,8 @@ export const UsoApp: React.FC = () => {
                                 onEdit={handleEdit}
                                 currentUserUid={user?.uid}
                                 isAdmin={isAdmin}
+                                canEdit={isAdmin || userPermissions.editar}
+                                canDelete={isAdmin || userPermissions.eliminar}
                               />
                             ))}
                           </div>

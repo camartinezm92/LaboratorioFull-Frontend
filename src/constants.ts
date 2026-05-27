@@ -9,7 +9,7 @@ export const PROFESSIONALS = [
     id: 'omadis',
     name: 'Omadis Emelda Meza González',
     signaturePath: '/firma2.png',
-    registry: 'CC.1047510854'
+    registry: 'CC. 1047510854'
   }
 ];
 
